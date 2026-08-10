@@ -7,5 +7,6 @@ from .value import Value
 @dataclass
 class Graph:
     inputs: list[Value] = field(default_factory=list)
+    parameters: list[Value] = field(default_factory=list)
     nodes: list[Node] = field(default_factory=list)
     outputs: list[Value] = field(default_factory=list)

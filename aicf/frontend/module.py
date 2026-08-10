@@ -1,11 +1,4 @@
-class Module:
-    """Base user-facing model object.
+# Backward-compatible import location for the early skeleton.
+from ..nn.module import Module
 
-    TODO: parameter registration, buffers, training/eval state, nested modules.
-    """
-
-    def __call__(self, *args, **kwargs):
-        return self.forward(*args, **kwargs)
-
-    def forward(self, *args, **kwargs):
-        raise NotImplementedError
+__all__ = ["Module"]

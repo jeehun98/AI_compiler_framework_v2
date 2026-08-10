@@ -10,14 +10,19 @@ from .lowering.cuda.lower import lower_to_cuda
 from .backend.cuda.codegen.generator import codegen
 from .runtime.executable import Executable
 from .diagnostics.events import emit
+from .nn.module import Module
 
 
-def compile(model_fn, input_specs, *, target="cuda", diagnostics=True):
+def compile(model, input_specs, *, target="cuda", diagnostics=True):
     context = CompileContext(target=target, diagnostics=diagnostics)
 
     with capture_graph() as builder:
         inputs = [builder.input(spec) for spec in input_specs]
-        output = model_fn(*inputs)
+
+        if isinstance(model, Module):
+            builder.bind_parameters(model.named_parameters())
+
+        output = model(*inputs)
         builder.output(output)
         graph = builder.graph
 

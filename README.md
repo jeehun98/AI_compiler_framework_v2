@@ -1,122 +1,160 @@
-# AICF Skeleton v0.1
+# AICF Skeleton v0.2
 
-A deliberately small **AI framework / compiler skeleton**. The goal is not to
-implement performance features yet, but to establish the places where each
-feature will live and where each layer can be observed.
+A minimal AI framework/compiler skeleton intended to be filled in feature by feature.
+The current focus is **structure**, not production execution.
 
-## Pipeline
+## User-facing model API
 
-```text
-User Model / Ops
-      ↓
-Frontend
-      ↓
-Graph
-      ↓
-High-level IR
-      ↓
-PassManager / Compiler decisions
-      ↓
-Optimized IR
-      ↓
-Lowering
-      ↓
-CUDA Backend / Codegen
-      ↓
-Runtime
-      ↓
-Hardware
+The first structural revision uses an `nn`-style model declaration instead of passing
+weights and bias as explicit model-function inputs.
+
+```python
+from aicf import nn
+
+model = nn.Sequential(
+    nn.Linear(64, 128),
+    nn.ReLU(),
+)
 ```
 
-`diagnostics/` observes the pipeline. `experiments/` exercises the pipeline.
-Neither is the center of the framework.
+Compilation receives only the actual user/program input:
 
-## Directory roles
+```python
+from aicf import compile
+from aicf.frontend.tensor import TensorSpec
+
+exe = compile(
+    model,
+    [TensorSpec((32, 64), "float32", "x")],
+)
+```
+
+`Linear` owns its model state:
+
+```text
+Sequential
+└─ Linear
+   ├─ weight : Parameter[64, 128]
+   └─ bias   : Parameter[128]
+└─ ReLU
+```
+
+The graph therefore separates:
+
+```text
+user input       model state          temporary values
+   %0          %1, %2                 %3, %4, %5
+    │            │                         │
+    └────────────┴── GEMM → BiasAdd → ReLU
+```
+
+## Architecture
+
+```text
+User Model / nn API
+        │
+        ▼
+Frontend Tensor + Ops
+        │
+        ▼
+Graph Capture
+        │
+        ▼
+Graph / Node / Value
+        │
+        ▼
+Graph → IR
+        │
+        ▼
+PassManager
+        │
+        ├─ CanonicalizePass      [mock]
+        └─ FusionPass            [detect only]
+        │
+        ▼
+CUDA Lowering                    [mock]
+        │
+        ▼
+CUDA Backend / Codegen           [mock]
+        │
+        ▼
+Runtime                          [mock]
+```
+
+Cross-cutting observation lives in `diagnostics/` and `profiler/`.
+Experiments use the framework rather than becoming the framework itself.
+
+## Package layout
 
 ```text
 aicf/
-├─ frontend/       # Tensor, Module, user-facing ops, future capture/tracing
-├─ graph/          # Graph / Node / Value and graph validation
-├─ ir/             # Internal representation and printer
-├─ compiler/       # PassManager, analyses, optimization passes
-├─ lowering/       # Decisions already made above → target representation
-├─ backend/        # CUDA target, kernels, code generation
-├─ runtime/        # Executable, executor, memory/runtime state
-├─ diagnostics/    # Graph/IR dump, decision logging, tracing hooks
-└─ profiler/       # Timer, NVTX, future Nsight Compute integration
+├─ nn/                    # user-facing Module / Sequential / layers
+│  ├─ module.py
+│  ├─ containers.py
+│  └─ layers.py
+├─ frontend/              # symbolic Tensor/Parameter and primitive ops
+├─ graph/                 # Graph / Node / Value / capture builder
+├─ ir/                    # compiler IR
+├─ compiler/              # analyses, passes, PassManager
+├─ lowering/              # high-level IR -> target representation
+├─ backend/cuda/          # CUDA target/codegen placeholders
+├─ runtime/               # executable/runtime placeholders
+├─ diagnostics/           # graph/IR/decision observability
+└─ profiler/              # timing/NVTX/NCU placeholders
 
-experiments/       # Small programs that probe framework behavior
-tests/             # Correctness/structural tests
+experiments/
+├─ capture/
+├─ fusion/
+├─ lowering/
+└─ hardware/
 ```
 
-## What is real in v0.1
+## Current implemented slice
 
-- user-facing symbolic `TensorSpec`
-- graph capture context
-- `Graph / Node / Value`
-- graph → IR conversion
-- `IRModule / Operation / IRValue / TensorType`
-- textual IR printer
-- `Pass` and `PassManager`
-- mock `CanonicalizePass`
-- mock `FusionPass` that only detects `gemm → bias_add → relu` and logs a decision
-- placeholder CUDA lowering
-- placeholder CUDA codegen
-- mock runtime executable
-- cross-layer diagnostics event hook
+```text
+nn.Sequential
+  ↓
+n.Linear + nn.ReLU
+  ↓
+Module child/parameter registration
+  ↓
+Graph inputs vs parameters
+  ↓
+GEMM → BiasAdd → ReLU
+  ↓
+IR
+  ↓
+Fusion candidate detection
+  ↓
+Mock CUDA lowering/runtime
+```
 
-## What is intentionally NOT implemented
+The following are intentionally incomplete and are intended to be implemented one at
+a time while studying the corresponding framework/compiler concept:
 
-- real tensor storage or eager execution
-- autograd
-- robust shape/type inference
-- alias/mutation analysis
-- actual fusion rewrite
-- legality / profitability model
-- tile/thread mapping
-- CUDA kernels
-- PTX/SASS generation
-- allocator / CUDA Graph runtime
-- NVTX/NCU integration
+- real Tensor storage and execution
+- parameter initialization / state_dict
+- use-def chains
+- graph mutation APIs
+- fusion legality and profitability
+- IR rewrite
+- shape/type inference system
+- target-specific lowering
+- CUDA code generation
+- memory planning
+- autograd and training state
+- actual profiling integration
 
-Those become individual implementation/study tasks as the framework grows.
+## Run
 
-## First experiment
+From the project root:
 
-```bash
+```powershell
 python -m experiments.fusion.gemm_bias_relu
 ```
 
-Expected conceptual output:
+## Tests
 
-```text
-graph.captured
-      ↓
-ir.created
-      ↓
-canonicalize
-      ↓
-fusion candidate detected, rewrite not implemented
-      ↓
-ir.optimized
-      ↓
-CUDA lowering placeholder
-      ↓
-backend placeholder
-      ↓
-mock runtime
+```powershell
+python -m pytest -q
 ```
-
-## Development rule
-
-When adding a feature, implement it in the layer that owns the decision:
-
-- semantic/model behavior → frontend/graph
-- optimization decision → compiler
-- execution strategy already selected → lowering
-- target implementation → backend
-- launch/memory/lifetime → runtime
-- observation only → diagnostics/profiler
-
-This keeps `lowering` from becoming a second optimizer and keeps experiments
-from becoming the framework itself.
