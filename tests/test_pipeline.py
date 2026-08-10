@@ -22,9 +22,7 @@ def test_mock_compile_pipeline():
     result = exe.run()
     assert result["status"] == "mock"
     assert result["kernels"] == [
-        "kernel_0_gemm",
-        "kernel_1_bias_add",
-        "kernel_2_relu",
+        "kernel_0_fused_gemm_bias_relu",
     ]
 
 
@@ -108,3 +106,69 @@ def test_ir_use_def_analysis():
     assert analysis.producer(relu_out) is relu
     assert analysis.users(relu_out) == ()
     assert analysis.use_count(relu_out) == 0
+
+
+def test_ir_verifier_accepts_fused_ir():
+    from aicf.context import CompileContext
+    from aicf.graph.builder import capture_graph
+    from aicf.ir.from_graph import graph_to_ir
+    from aicf.ir.verifier import verify_ir
+    from aicf.compiler.passes.fusion import FusionPass
+
+    model = nn.Sequential(
+        nn.Linear(4, 8),
+        nn.ReLU(),
+    )
+
+    with capture_graph() as builder:
+        x = builder.input(TensorSpec((2, 4), name="x"))
+        builder.bind_parameters(model.named_parameters())
+        y = model(x)
+        builder.output(y)
+        graph = builder.graph
+
+    module = graph_to_ir(graph)
+    context = CompileContext(diagnostics=False)
+
+    FusionPass().run(module, context)
+
+    # Must not raise after the rewrite.
+    verify_ir(module)
+    assert [op.name for op in module.ops] == ["fused_gemm_bias_relu"]
+
+
+def test_analysis_cache_is_invalidated_after_fusion_rewrite():
+    from aicf.context import CompileContext
+    from aicf.graph.builder import capture_graph
+    from aicf.ir.from_graph import graph_to_ir
+    from aicf.compiler.passes.fusion import FusionPass
+
+    model = nn.Sequential(
+        nn.Linear(4, 8),
+        nn.ReLU(),
+    )
+
+    with capture_graph() as builder:
+        x = builder.input(TensorSpec((2, 4), name="x"))
+        builder.bind_parameters(model.named_parameters())
+        y = model(x)
+        builder.output(y)
+        graph = builder.graph
+
+    module = graph_to_ir(graph)
+    context = CompileContext(diagnostics=False)
+
+    before = context.analyses.use_def(module)
+
+    FusionPass().run(module, context)
+
+    after = context.analyses.use_def(module)
+
+    assert after is not before
+    assert [op.name for op in module.ops] == ["fused_gemm_bias_relu"]
+
+    fused = module.ops[0]
+    output = fused.results[0]
+
+    assert after.producer(output) is fused
+    assert after.use_count(output) == 0

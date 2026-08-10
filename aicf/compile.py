@@ -4,7 +4,6 @@ from .graph.builder import capture_graph
 from .graph.verifier import verify_graph
 from .ir.from_graph import graph_to_ir
 from .compiler.pass_manager import PassManager
-from .compiler.analysis.use_def import build_use_def
 from .compiler.passes.canonicalize import CanonicalizePass
 from .compiler.passes.fusion import FusionPass
 from .lowering.cuda.lower import lower_to_cuda
@@ -34,7 +33,7 @@ def compile(model, input_specs, *, target="cuda", diagnostics=True):
     module = graph_to_ir(graph)
     emit(context, "ir.created", module)
 
-    ir_use_def = build_use_def(module)
+    ir_use_def = context.analyses.use_def(module)
     emit(
         context,
         "ir.use_def",

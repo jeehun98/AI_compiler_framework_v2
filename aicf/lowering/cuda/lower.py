@@ -1,19 +1,29 @@
 from __future__ import annotations
-from dataclasses import dataclass
+
 from ...ir.module import IRModule
-
-
-@dataclass
-class CUDALoweredModule:
-    """Placeholder target representation.
-
-    TODO: loop/tile/thread mapping/shared-memory/intrinsic level IR.
-    """
-    source_ir: IRModule
-    kernels: list[str]
+from .ir import CUDALoweredModule
+from .rules import CUDA_LOWERINGS
 
 
 def lower_to_cuda(module: IRModule, context) -> CUDALoweredModule:
-    # One symbolic kernel per operation for now.
-    kernels = [f"kernel_{i}_{op.name}" for i, op in enumerate(module.ops)]
-    return CUDALoweredModule(module, kernels)
+    """Lower optimized IR operations using registered CUDA lowering rules.
+
+    Optimization decisions are assumed to have already happened. This layer
+    only translates each selected IR operation into target-side kernel plans.
+    """
+
+    kernels = []
+
+    for index, op in enumerate(module.ops):
+        rule = CUDA_LOWERINGS.require(op.name)
+        produced = rule(
+            op,
+            index=index,
+            context=context,
+        )
+        kernels.extend(produced)
+
+    return CUDALoweredModule(
+        source_ir=module,
+        kernels=kernels,
+    )

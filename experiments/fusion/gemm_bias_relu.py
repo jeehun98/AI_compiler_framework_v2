@@ -6,6 +6,7 @@ from aicf.diagnostics.graph_dump import format_graph
 from aicf.diagnostics.use_def_dump import format_use_def
 from aicf.diagnostics.ir_use_def_dump import format_ir_use_def
 from aicf.ir.printer import format_ir
+from aicf.diagnostics.lowering_dump import format_cuda_lowering
 
 
 model = nn.Sequential(
@@ -22,6 +23,8 @@ def print_event(event, payload):
         print(format_use_def(payload))
     elif event == "ir.use_def":
         print(format_ir_use_def(payload["module"], payload["analysis"]))
+    elif event == "lowering.finished":
+        print(format_cuda_lowering(payload))
     elif event.startswith("ir.") or event.startswith("pass."):
         module = payload.get("module") if isinstance(payload, dict) else payload
         print(format_ir(module))

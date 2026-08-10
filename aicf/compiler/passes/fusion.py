@@ -1,24 +1,23 @@
 from ..pass_base import Pass
-from ..analysis.use_def import build_use_def
 from ...diagnostics.events import emit
+from ...ir.operation import Operation
 
 
 class FusionPass(Pass):
     name = "fusion"
 
     def run(self, module, context):
-        """Detect GEMM -> BiasAdd -> ReLU through actual IR dataflow.
+        """Fuse a legal GEMM -> BiasAdd -> ReLU dataflow chain.
 
-        v0.5 only performs:
-        1. candidate discovery
-        2. legality checks
-        3. decision logging
+        v0.6 deliberately keeps the policy simple:
+        - discover a candidate through IR use-def
+        - check minimal legality
+        - select every legal candidate
+        - rewrite the three operations into one fused operation
 
-        Profitability analysis and IR rewriting are intentionally deferred.
+        Profitability/cost modeling is still intentionally not implemented.
         """
-
-        analysis = build_use_def(module)
-
+        analysis = context.analyses.use_def(module)
         candidate = self._find_candidate(module, analysis)
 
         if candidate is None:
@@ -37,7 +36,6 @@ class FusionPass(Pass):
             return module
 
         gemm, bias_add, relu = candidate
-
         legal, reason = self._check_legality(
             gemm,
             bias_add,
@@ -45,28 +43,44 @@ class FusionPass(Pass):
             analysis,
         )
 
+        if not legal:
+            emit(
+                context,
+                "optimization.decision",
+                {
+                    "candidate": "gemm_bias_relu",
+                    "found": True,
+                    "legal": False,
+                    "profitable": None,
+                    "selected": False,
+                    "reason": reason,
+                },
+            )
+            return module
+
+        self._rewrite(module, gemm, bias_add, relu)
+
+        # The module was mutated in place, so any analysis built from the old
+        # operation/value relationships is stale from this point onward.
+        context.analyses.invalidate(module)
+
         emit(
             context,
             "optimization.decision",
             {
                 "candidate": "gemm_bias_relu",
                 "found": True,
-                "legal": legal,
+                "legal": True,
                 "profitable": None,
-                "selected": False,
-                "reason": reason,
+                "selected": True,
+                "reason": "selected by fixed fusion policy; IR rewrite applied",
             },
         )
 
         return module
 
     def _find_candidate(self, module, analysis):
-        """Find a connected GEMM -> BiasAdd -> ReLU path.
-
-        Operations do not need to be adjacent in module.ops.
-        The relationship is discovered through IR uses.
-        """
-
+        """Find a connected GEMM -> BiasAdd -> ReLU dataflow path."""
         for gemm in module.ops:
             if gemm.name != "gemm":
                 continue
@@ -82,7 +96,6 @@ class FusionPass(Pass):
                 if bias_add.name != "bias_add":
                     continue
 
-                # GEMM result must feed bias_add's x operand.
                 if gemm_use.operand_index != 0:
                     continue
 
@@ -97,7 +110,6 @@ class FusionPass(Pass):
                     if relu.name != "relu":
                         continue
 
-                    # BiasAdd result must feed ReLU's input.
                     if bias_use.operand_index != 0:
                         continue
 
@@ -112,44 +124,70 @@ class FusionPass(Pass):
         relu,
         analysis,
     ):
-        """Check the minimal legality rules for this fusion."""
+        """Check the minimal structural rules required by this rewrite."""
+        if len(gemm.operands) != 2 or len(gemm.results) != 1:
+            return False, "gemm arity is not supported by fusion"
+
+        if len(bias_add.operands) != 2 or len(bias_add.results) != 1:
+            return False, "bias_add arity is not supported by fusion"
+
+        if len(relu.operands) != 1 or len(relu.results) != 1:
+            return False, "relu arity is not supported by fusion"
 
         gemm_result = gemm.results[0]
         bias_result = bias_add.results[0]
 
         if analysis.use_count(gemm_result) != 1:
-            return (
-                False,
-                "gemm result has multiple uses",
-            )
+            return False, "gemm result has multiple uses"
 
         if analysis.use_count(bias_result) != 1:
-            return (
-                False,
-                "bias_add result has multiple uses",
-            )
+            return False, "bias_add result has multiple uses"
 
-        # Defensive checks: candidate discovery already established these,
-        # but legality should state its own invariants explicitly.
-        if (
-            not bias_add.operands
-            or bias_add.operands[0] is not gemm_result
-        ):
-            return (
-                False,
-                "bias_add does not consume gemm result as operand 0",
-            )
+        if bias_add.operands[0] is not gemm_result:
+            return False, "bias_add does not consume gemm result as operand 0"
 
-        if (
-            not relu.operands
-            or relu.operands[0] is not bias_result
-        ):
-            return (
-                False,
-                "relu does not consume bias_add result as operand 0",
-            )
+        if relu.operands[0] is not bias_result:
+            return False, "relu does not consume bias_add result as operand 0"
 
-        return (
-            True,
-            "legal candidate; profitability and rewrite not implemented",
+        return True, "legal"
+
+    def _rewrite(self, module, gemm, bias_add, relu) -> None:
+        """Replace three operations with one fused operation.
+
+        The fused operation reuses ReLU's result IRValue. This preserves all
+        downstream references and module outputs without a separate replace-all-
+        uses operation. The intermediate GEMM/BiasAdd values disappear together
+        with their defining operations.
+        """
+        fused = Operation(
+            name="fused_gemm_bias_relu",
+            operands=[
+                gemm.operands[0],
+                gemm.operands[1],
+                bias_add.operands[1],
+            ],
+            results=[relu.results[0]],
+            attrs={
+                "fused_ops": (
+                    "gemm",
+                    "bias_add",
+                    "relu",
+                )
+            },
         )
+
+        rewritten_ops = []
+
+        for op in module.ops:
+            if op is gemm or op is bias_add:
+                continue
+
+            if op is relu:
+                # Insert at the old ReLU position so every fused operand that
+                # was available to ReLU is still defined before the new op.
+                rewritten_ops.append(fused)
+                continue
+
+            rewritten_ops.append(op)
+
+        module.ops = rewritten_ops
