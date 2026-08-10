@@ -3,6 +3,8 @@ from aicf import compile, nn
 from aicf.frontend.tensor import TensorSpec
 from aicf.diagnostics.events import add_listener, clear_listeners
 from aicf.diagnostics.graph_dump import format_graph
+from aicf.diagnostics.use_def_dump import format_use_def
+from aicf.diagnostics.ir_use_def_dump import format_ir_use_def
 from aicf.ir.printer import format_ir
 
 
@@ -16,6 +18,10 @@ def print_event(event, payload):
     print(f"\n[{event}]")
     if event == "graph.captured":
         print(format_graph(payload))
+    elif event == "graph.use_def":
+        print(format_use_def(payload))
+    elif event == "ir.use_def":
+        print(format_ir_use_def(payload["module"], payload["analysis"]))
     elif event.startswith("ir.") or event.startswith("pass."):
         module = payload.get("module") if isinstance(payload, dict) else payload
         print(format_ir(module))

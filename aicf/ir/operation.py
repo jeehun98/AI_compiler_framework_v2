@@ -4,8 +4,10 @@ from typing import Any
 from .value import IRValue
 
 
-@dataclass
+@dataclass(eq=False)
 class Operation:
+    """A compiler IR operation with operands and result values."""
+
     name: str
     operands: list[IRValue]
     results: list[IRValue]

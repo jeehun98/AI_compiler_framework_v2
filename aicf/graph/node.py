@@ -4,7 +4,7 @@ from typing import Any
 from .value import Value
 
 
-@dataclass
+@dataclass(eq=False)
 class Node:
     id: int
     op: str

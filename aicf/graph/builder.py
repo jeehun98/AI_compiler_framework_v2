@@ -56,16 +56,42 @@ class GraphBuilder:
         self._parameter_values[key] = tensor
         return tensor
 
-    def emit(self, op: str, inputs: list[Tensor], out_spec: TensorSpec) -> Tensor:
+    def emit(
+        self,
+        op: str,
+        inputs: list[Tensor],
+        out_spec: TensorSpec,
+    ) -> Tensor:
         in_values = [tensor.value for tensor in inputs]
+
         if any(value is None for value in in_values):
-            raise RuntimeError("cannot emit graph op from an unbound Tensor")
+            raise RuntimeError(
+                "cannot emit graph op from an unbound Tensor"
+            )
 
         out = self._value(out_spec)
-        node = Node(self._next_node, op, in_values, [out])
+
+        node = Node(
+            self._next_node,
+            op,
+            in_values,
+            [out],
+        )
+
         self._next_node += 1
+
+        # Build use-def relationships.
+        out.producer = node
+
+        for value in in_values:
+            value.users.append(node)
+
         self.graph.nodes.append(node)
-        return Tensor(out_spec, value=out)
+
+        return Tensor(
+            out_spec,
+            value=out,
+        )
 
     def output(self, tensor: Tensor):
         if tensor.value is None:

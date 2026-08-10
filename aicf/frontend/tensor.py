@@ -1,37 +1,54 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
 class TensorSpec:
     shape: tuple[int, ...]
     dtype: str = "float32"
-    name: Optional[str] = None
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.shape, tuple):
+            raise TypeError("shape must be a tuple")
+
+        for dimension in self.shape:
+            if not isinstance(dimension, int) or isinstance(dimension, bool):
+                raise TypeError("shape dimensions must be integers")
+            if dimension < 0:
+                raise ValueError("shape dimensions must be non-negative")
+
+        if not isinstance(self.dtype, str) or not self.dtype:
+            raise TypeError("dtype must be a non-empty string")
 
 
 @dataclass
 class Tensor:
-    """Symbolic frontend tensor used while graph capture is active.
-
-    `value` points to the graph-level Value that represents this tensor.
-    Actual storage/device data is intentionally not implemented yet.
-    """
+    """Symbolic tensor associated with a graph-level Value."""
 
     spec: TensorSpec
     value: object | None = None
 
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self.spec.shape
+
+    @property
+    def dtype(self) -> str:
+        return self.spec.dtype
+
 
 @dataclass(eq=False)
 class Parameter:
-    """Model-owned tensor state.
-
-    This is intentionally lightweight. A future implementation can make
-    Parameter a real Tensor subclass with storage, initialization and gradients.
-    """
+    """Model-owned symbolic tensor state."""
 
     spec: TensorSpec
     requires_grad: bool = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.requires_grad, bool):
+            raise TypeError("requires_grad must be a bool")
 
     @property
     def shape(self) -> tuple[int, ...]:
