@@ -8,13 +8,23 @@ from .compiler.passes.canonicalize import CanonicalizePass
 from .compiler.passes.fusion import FusionPass
 from .lowering.cuda.lower import lower_to_cuda
 from .backend.cuda.codegen.generator import codegen
+from .backend.cuda.compiler import compile_with_nvrtc
 from .runtime.bindings import build_runtime_signature
 from .runtime.executable import Executable
 from .diagnostics.events import emit
 from .nn.module import Module
 
 
-def compile(model, input_specs, *, target="cuda", diagnostics=True):
+def compile(
+    model,
+    input_specs,
+    *,
+    target="cuda",
+    diagnostics=True,
+    cuda_compile=False,
+    cuda_arch=None,
+    nvrtc_library=None,
+):
     context = CompileContext(target=target, diagnostics=diagnostics)
     input_specs = tuple(input_specs)
 
@@ -61,10 +71,23 @@ def compile(model, input_specs, *, target="cuda", diagnostics=True):
     image = codegen(lowered)
     emit(context, "backend.codegen", image)
 
+    compiled_image = None
+    if cuda_compile:
+        compiled_image = compile_with_nvrtc(
+            image,
+            arch=cuda_arch,
+            library_path=nvrtc_library,
+        )
+        emit(context, "backend.compiled", compiled_image)
+
     signature = build_runtime_signature(
         module,
         input_specs,
         named_parameters,
     )
 
-    return Executable(image, signature)
+    return Executable(
+        image,
+        signature,
+        compiled_image=compiled_image,
+    )

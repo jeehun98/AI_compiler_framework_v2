@@ -9,6 +9,7 @@ from .bindings import RuntimeBindings, RuntimeSignature
 class Executable:
     image: object
     signature: RuntimeSignature
+    compiled_image: object | None = None
 
     def bind(self, *args) -> RuntimeBindings:
         """Bind concrete host inputs, parameters and result buffers."""
@@ -17,7 +18,7 @@ class Executable:
 
     def run(self, *args, **kwargs):
         if kwargs:
-            raise TypeError("v0.16 runtime accepts positional inputs only")
+            raise TypeError("v0.17 runtime accepts positional inputs only")
 
         bindings = self.bind(*args)
 
@@ -49,10 +50,26 @@ class Executable:
 
             launches.append(launch)
 
-        return {
-            "status": "host_bound",
+        compiled = self.compiled_image is not None
+        result = {
+            "status": "cuda_compiled" if compiled else "host_bound",
+            "compiled": compiled,
             "launched": False,
             "kernels": list(getattr(self.image, "kernels", [])),
             "buffers": bindings.summary(),
             "launches": launches,
         }
+
+        if compiled:
+            result["compiler"] = getattr(
+                self.compiled_image,
+                "compiler",
+                None,
+            )
+            result["ptx_nbytes"] = getattr(
+                self.compiled_image,
+                "ptx_nbytes",
+                0,
+            )
+
+        return result

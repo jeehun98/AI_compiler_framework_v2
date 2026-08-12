@@ -8,6 +8,7 @@ class CUDAExecutableImage:
     kernels: list[str]
     code: str
     plans: list[object] = field(default_factory=list)
+    unresolved_kernels: list[str] = field(default_factory=list)
 
 
 def _cuda_scalar_type(dtype: str) -> str:
@@ -230,6 +231,7 @@ def codegen(lowered) -> CUDAExecutableImage:
 
     kernel_names = [plan.name for plan in lowered.kernels]
     chunks: list[str] = []
+    unresolved_kernels: list[str] = []
 
     for plan in lowered.kernels:
         if chunks:
@@ -241,10 +243,12 @@ def codegen(lowered) -> CUDAExecutableImage:
             chunks.append("")
             chunks.extend(_emit_gemm_kernel(plan))
         else:
+            unresolved_kernels.append(plan.name)
             chunks.append(f"// TODO executable CUDA codegen for {plan.name}")
 
     return CUDAExecutableImage(
         kernels=kernel_names,
         code="\n".join(chunks),
         plans=list(lowered.kernels),
+        unresolved_kernels=unresolved_kernels,
     )
