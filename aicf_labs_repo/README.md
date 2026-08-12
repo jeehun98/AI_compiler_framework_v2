@@ -1,46 +1,87 @@
 # AICF Labs
 
-AICF Labs is the restructured project that follows the v0.20 end-to-end compiler/codegen milestone.
+AICF Labs is a separate experimental repository built after the original AICF v0.20 vertical slice.
 
-The project intentionally separates two optimization questions:
-
-- **Frontend Lab** — what computation should be performed?
-- **Backend CUDA Lab** — how should a fixed computation be executed on the GPU?
-
-The two labs share **contracts**, not implementation code.
+The repository deliberately has **two independent laboratories**.
 
 ```text
-Model / Graph
-    ↓
 Frontend Lab
-    ↓
-WorkloadSpec
-    ↓
+operator mathematical properties
+→ binary marking
+→ mask propagation / candidate screening
+→ detailed transformation analysis
+
 Backend CUDA Lab
-    ↓
-Implementation + Artifact + Measurement
-    ↓
-ExperimentRecord
+fixed CUDA kernel
+→ CUDA source / AST / PTX / SASS
+→ runtime observation
+→ optimization hypothesis
 ```
 
-The previous v0.20 codegen path is retained as a **generated_naive baseline implementation**, not as the center of the repository.
+They meet only through shared contracts such as `WorkloadSpec`, `ImplementationSpec`, and `ExperimentRecord`.
 
-## Initial milestone
+## Frontend principle
 
-The first milestone is architectural rather than performance-oriented:
+The first frontend primitive is not a CUDA lowering rule. It is an operator-property vocabulary:
 
-1. freeze the v0.20 baseline,
-2. introduce WorkloadSpec / ImplementationSpec / ExperimentRecord,
-3. adapt the old fused GEMM+Bias+ReLU path into `generated_naive`,
-4. allow frontend-only, backend-only, and connected experiments to run independently.
+```text
+bit 0 COMMUTATIVE
+bit 1 ASSOCIATIVE
+bit 2 ELEMENTWISE
+...
+```
 
-## Install
+Each operator has its own binary mark. A cheap mask propagation pass can intersect properties across an operator region and preserve or eliminate optimization possibilities. A surviving bit is a **screening signal**, not a proof of final legality.
 
-```bash
+## Backend principle
+
+The backend starts from an already defined CUDA kernel. It observes how the same mathematical computation appears at different execution layers:
+
+```text
+CUDA source
+→ CUDA AST
+→ PTX
+→ SASS
+→ runtime / profiler counters
+```
+
+Optimization comes after observation. The repository therefore separates artifact collection tools from artifact analyzers.
+
+## v0.20 baseline
+
+The original end-to-end generated `GEMM + Bias + ReLU` CUDA kernel is preserved as a frozen baseline kernel under:
+
+```text
+src/aicf_labs/backend_cuda/kernels/sources/
+```
+
+The old codegen/lowering/runtime implementation remains under `legacy_v020/` only as migration reference. It is not the center of this repository.
+
+## Install / test
+
+```powershell
 python -m pip install -e ".[dev]"
 pytest -q
 ```
 
-## Layout
+## First experiments
 
-See `docs/architecture.md` and `docs/migration_from_codegen.md`.
+Frontend mask propagation:
+
+```powershell
+python -m experiments.frontend.operator_mask_walk
+```
+
+Backend CUDA-source observation:
+
+```powershell
+python -m experiments.backend.observe_generated_naive
+```
+
+If AST/PTX/SASS text artifacts have already been collected:
+
+```powershell
+python -m experiments.backend.observe_generated_naive --ast out.ast --ptx out.ptx --sass out.sass
+```
+
+See `docs/project_direction.md`, `docs/architecture.md`, `docs/frontend_marking.md`, and `docs/backend_observation.md`.

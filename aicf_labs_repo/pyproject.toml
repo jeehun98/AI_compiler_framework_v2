@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aicf-labs"
-version = "0.1.0"
-description = "Independent frontend/backend optimization labs connected by workload and experiment contracts."
+version = "0.2.0"
+description = "Operator-marking frontend experiments and CUDA artifact-observation backend experiments."
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26"]
 
@@ -18,3 +18,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+"aicf_labs.backend_cuda.kernels" = ["sources/*.cu"]

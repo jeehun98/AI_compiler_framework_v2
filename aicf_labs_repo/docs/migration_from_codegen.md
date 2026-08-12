@@ -1,21 +1,23 @@
-# Migration from the v0.20 codegen-centered project
+# Migration from the original AICF codegen project
 
-The v0.20 vertical slice remains the baseline, but its components move to new ownership boundaries.
+The original project proved a complete vertical slice:
 
-| Previous area | New destination | Meaning |
-|---|---|---|
-| `nn/`, `frontend/`, `graph/`, `ir/`, fusion analysis/pass | `frontend_lab/` | high-level model/graph reasoning |
-| fused IR → GEMM M/N/K extraction | frontend adapter + `WorkloadSpec` | computation contract extraction |
-| CUDA problem/tile/schedule/mapping plan | `codegen_prototype/` | generated-naive implementation planning |
-| CUDA source emitter | `codegen_prototype/` | baseline implementation generator |
-| NVRTC | `backend_cuda/compile` (future move) | CUDA compilation infrastructure |
-| CUDA Driver API | `backend_cuda/driver` (future move) | device/module infrastructure |
-| device bindings / launch runtime | `backend_cuda/runtime` (future move) | backend execution infrastructure |
-| numerical comparison | `backend_cuda/validation` + contracts | implementation-independent validation result |
-| diagnostics | experiment/artifact records | reproducible observations |
+```text
+Model → Graph → IR → Fusion → CUDA lowering → CUDA source → NVRTC → PTX → Driver → GPU execution → validation
+```
 
-## Migration rule
+That path is preserved, but it no longer defines the architecture of AICF Labs.
 
-Do not move all legacy files at once. New contracts are introduced first, then legacy capabilities are wrapped behind adapters, and only then physically moved.
+## What was extracted
 
-The `legacy_v020/` directory in this repository contains selected source snapshots for migration/reference. It is deliberately not importable as the new core package.
+- the generated naive fused GEMM/Bias/ReLU CUDA kernel as a fixed backend observation baseline;
+- the v0.20 NVRTC/Driver/device-memory/runtime files under `legacy_v020/` as migration references;
+- shared workload, environment, validation, artifact, and experiment contracts.
+
+## What changed
+
+Frontend research now starts from operator mathematical-property marking, not code generation.
+
+Backend research now starts from an existing CUDA kernel and its artifacts, not from a requirement that every workload pass through the old generator.
+
+The old code generator may still be used as one controlled implementation source, but it is not a mandatory path.

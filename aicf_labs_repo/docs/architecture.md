@@ -1,40 +1,51 @@
 # Architecture
 
-## Core boundary
+## Purpose
+
+AICF Labs separates two questions that should not be forced into one compiler/codegen pipeline.
 
 ```text
-Frontend Lab
-  model / graph / analysis / pattern / transform
-                  │
-                  ▼
-             WorkloadSpec
-                  │
-                  ▼
-Backend CUDA Lab
-  implementation / compile / artifact / profile / validate
-                  │
-                  ▼
-           ExperimentRecord
+Frontend: what transformations are mathematically/structurally possible?
+Backend: how is a fixed mathematical CUDA computation actually executed?
 ```
 
-### Frontend Lab
+## Repository boundary
 
-Owns model/graph semantics and transformation decisions. It must not require a CUDA implementation.
+```text
+src/aicf_labs/
+├─ contracts/          shared experiment/workload records
+├─ frontend_lab/
+│  ├─ marking/         bit vocabulary + operator-specific masks
+│  └─ analysis/        propagation and candidate screening
+├─ backend_cuda/
+│  ├─ kernels/         fixed CUDA kernels to observe
+│  ├─ observation/     CUDA/AST/PTX/SASS parsers
+│  ├─ tools/           artifact-producing external tool adapters
+│  └─ implementations/ backend implementation identities
+└─ codegen_prototype/  compatibility/reference only
+```
 
-### Contracts
+## Frontend flow
 
-Owns stable, implementation-independent data structures shared by both sides.
+```text
+Mask Definition
+→ Operator Mark Definition
+→ mask propagation
+→ candidate region
+→ detailed legality / semantic validation (future)
+→ transformation record
+```
 
-### Backend CUDA Lab
+## Backend flow
 
-Owns implementations of an already-defined workload. It must not require the original model or graph.
+```text
+KernelSpec
+→ CUDA source observation
+→ AST artifact observation
+→ PTX artifact observation
+→ SASS artifact observation
+→ runtime observation
+→ comparison / hypothesis (future)
+```
 
-### Codegen Prototype
-
-The old generated CUDA path is one backend implementation candidate. It is useful as:
-
-- a correctness baseline,
-- a controlled code-generation experiment,
-- a CUDA/PTX/SASS learning artifact.
-
-It is not the mandatory path for every workload.
+No backend optimization is implied simply because an artifact was observed. Observation is the first-class output.

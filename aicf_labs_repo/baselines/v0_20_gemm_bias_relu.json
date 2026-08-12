@@ -14,7 +14,7 @@
     "selected": true
   },
   "implementation": {
-    "name": "generated_naive",
+    "name": "generated_naive_v020",
     "block_m": 128,
     "block_n": 128,
     "block_k": 32,

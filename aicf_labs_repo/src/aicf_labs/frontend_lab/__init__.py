@@ -1,5 +1,13 @@
-"""High-level optimization lab.
+"""Frontend laboratory: mathematical operator marking and transformation screening."""
 
-This package should depend on model/graph semantics and contracts, but not on
-specific CUDA implementations.
-"""
+from .analysis import GENERIC_ELEMENTWISE_SCREEN, FusionScreen, propagate_common_mask
+from .marking import OpMask, OperatorMark, default_operator_registry
+
+__all__ = [
+    "FusionScreen",
+    "GENERIC_ELEMENTWISE_SCREEN",
+    "OpMask",
+    "OperatorMark",
+    "default_operator_registry",
+    "propagate_common_mask",
+]

@@ -1,4 +1,4 @@
-"""AICF Labs: frontend/backend optimization experiments connected by contracts."""
+"""AICF Labs: operator-marking frontend research and CUDA execution observation."""
 
 from .contracts import (
     ExperimentRecord,
