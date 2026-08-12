@@ -8,6 +8,7 @@ from .compiler.passes.canonicalize import CanonicalizePass
 from .compiler.passes.fusion import FusionPass
 from .lowering.cuda.lower import lower_to_cuda
 from .backend.cuda.codegen.generator import codegen
+from .runtime.bindings import build_runtime_signature
 from .runtime.executable import Executable
 from .diagnostics.events import emit
 from .nn.module import Module
@@ -15,12 +16,19 @@ from .nn.module import Module
 
 def compile(model, input_specs, *, target="cuda", diagnostics=True):
     context = CompileContext(target=target, diagnostics=diagnostics)
+    input_specs = tuple(input_specs)
+
+    named_parameters = (
+        tuple(model.named_parameters())
+        if isinstance(model, Module)
+        else ()
+    )
 
     with capture_graph() as builder:
         inputs = [builder.input(spec) for spec in input_specs]
 
         if isinstance(model, Module):
-            builder.bind_parameters(model.named_parameters())
+            builder.bind_parameters(named_parameters)
 
         output = model(*inputs)
         builder.output(output)
@@ -52,4 +60,11 @@ def compile(model, input_specs, *, target="cuda", diagnostics=True):
 
     image = codegen(lowered)
     emit(context, "backend.codegen", image)
-    return Executable(image)
+
+    signature = build_runtime_signature(
+        module,
+        input_specs,
+        named_parameters,
+    )
+
+    return Executable(image, signature)

@@ -1,3 +1,5 @@
+import numpy as np
+
 from aicf import compile, nn
 from aicf.frontend.tensor import TensorSpec
 from aicf.diagnostics.events import add_listener, clear_listeners
@@ -58,7 +60,8 @@ def test_gemm_bias_relu_is_rewritten_when_legal():
     assert fused.operands[2] is module.parameters[1]
     assert fused.results == module.outputs
 
-    assert executable.run()["kernels"] == [
+    runtime_x = np.zeros((2, 4), dtype=np.float32)
+    assert executable.run(runtime_x)["kernels"] == [
         "kernel_0_fused_gemm_bias_relu",
     ]
 
@@ -95,7 +98,8 @@ def test_gemm_bias_relu_rejected_when_bias_result_has_multiple_uses():
         "relu",
     ]
 
-    assert executable.run()["kernels"] == [
+    runtime_x = np.zeros((2, 4), dtype=np.float32)
+    assert executable.run(runtime_x)["kernels"] == [
         "kernel_0_gemm",
         "kernel_1_bias_add",
         "kernel_2_relu",

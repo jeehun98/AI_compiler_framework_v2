@@ -46,6 +46,35 @@ def format_cuda_lowering(lowered) -> str:
                 f"{kernel.block_mapping.outputs_per_thread})"
             )
 
+        if kernel.thread_mapping is not None:
+            lines.append(
+                "  thread_map= "
+                "GEMMThreadMapping("
+                f"traversal={kernel.thread_mapping.traversal}, "
+                f"output_order={kernel.thread_mapping.output_order}, "
+                f"thread_axis={kernel.thread_mapping.thread_axis}, "
+                f"block_m_axis={kernel.thread_mapping.block_m_axis}, "
+                f"block_n_axis={kernel.thread_mapping.block_n_axis})"
+            )
+
+        if kernel.control_flow is not None:
+            lines.append(
+                "  flow      = "
+                "GEMMControlFlow("
+                f"output_traversal={kernel.control_flow.output_traversal}, "
+                f"output_guard={kernel.control_flow.output_guard}, "
+                f"k_traversal={kernel.control_flow.k_traversal}, "
+                f"k_tail_guard={kernel.control_flow.k_tail_guard})"
+            )
+
+        if kernel.epilogue is not None:
+            lines.append(
+                "  epilogue  = "
+                "GEMMEpilogue("
+                f"bias={kernel.epilogue.bias}, "
+                f"activation={kernel.epilogue.activation})"
+            )
+
         lines.append(f"  inputs    = [{', '.join(kernel.inputs)}]")
         lines.append(f"  outputs   = [{', '.join(kernel.outputs)}]")
 

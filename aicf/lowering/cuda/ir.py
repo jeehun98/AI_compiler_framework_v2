@@ -45,7 +45,7 @@ class GEMMSchedule:
     `k_tiles` counts the reduction chunks required to cover K.
 
     Despite the word "grid", this is not yet a physical CUDA launch config.
-    A later execution-mapping stage will connect these logical tile counts to
+    A later execution-mapping stage connects these logical tile counts to
     blockIdx/threadIdx and concrete dim3 launch dimensions.
     """
 
@@ -56,7 +56,7 @@ class GEMMSchedule:
 
 @dataclass(frozen=True)
 class GEMMBlockMapping:
-    """Minimal physical CUDA thread-block mapping for one logical GEMM tile.
+    """Minimal physical CUDA thread-block allocation for one GEMM tile.
 
     `threads` is the number of CUDA threads assigned to one logical output
     tile. `warps` is the corresponding warp count for the current CUDA warp
@@ -64,13 +64,74 @@ class GEMMBlockMapping:
     each thread must visit when the tile is traversed with a simple strided
     loop.
 
-    This does not yet define threadIdx -> (local_m, local_n), warp tiles,
-    register tiles, shared-memory loads or a concrete dim3 launch shape.
+    This object answers *how many physical workers are assigned*. The exact
+    threadIdx/blockIdx -> matrix-coordinate relation is represented separately
+    by `GEMMThreadMapping`.
     """
 
     threads: int
     warps: int
     outputs_per_thread: int
+
+
+@dataclass(frozen=True)
+class GEMMThreadMapping:
+    """Explicit coordinate convention for mapping CUDA indices to GEMM C.
+
+    v0.13 defines the first concrete mapping contract:
+
+        output = threadIdx.x + iteration * blockDim.x
+        local_m = output // BN
+        local_n = output % BN
+        row = blockIdx.y * BM + local_m
+        col = blockIdx.x * BN + local_n
+
+    The mapping is deliberately simple and row-major. It still does not add
+    boundary predicates, the GEMM K-loop, memory planning or actual CUDA source
+    emission; those are later stages.
+    """
+
+    traversal: str
+    output_order: str
+    thread_axis: str
+    block_m_axis: str
+    block_n_axis: str
+
+
+@dataclass(frozen=True)
+class GEMMControlFlow:
+    """Control-flow policy for the first naive GEMM kernel body.
+
+    `output_traversal` describes how threads walk the logical output tile.
+    `output_guard` records whether row/column bounds must be checked because
+    M or N is not exactly covered by whole output tiles.
+
+    `k_traversal` describes the reduction as an outer K-tile loop plus an
+    inner BK loop. `k_tail_guard` records whether the final K tile requires
+    an explicit `k < K` predicate.
+
+    This still does not describe memory movement or the multiply-accumulate
+    expression itself; v0.14 only makes the kernel control flow explicit.
+    """
+
+    output_traversal: str
+    output_guard: bool
+    k_traversal: str
+    k_tail_guard: bool
+
+
+@dataclass(frozen=True)
+class GEMMEpilogue:
+    """Output transformation applied after GEMM accumulation.
+
+    v0.15 keeps this intentionally small: a GEMM may optionally add a bias
+    vector and optionally apply one named activation. Keeping the epilogue in
+    the lowering plan means backend codegen does not need to infer semantics
+    from an operation name or strategy string.
+    """
+
+    bias: bool
+    activation: str | None = None
 
 
 @dataclass
@@ -80,10 +141,14 @@ class CUDAKernelPlan:
     `problem` describes what GEMM must be computed. `tile` describes how the
     problem is partitioned into logical output/reduction tiles. `schedule`
     records how many such tiles are needed to cover the full problem.
-    `block_mapping` begins the physical CUDA mapping by assigning a fixed
-    number of threads/warps to one logical output tile.
+    `block_mapping` assigns a physical CUDA thread count to each output tile.
+    `thread_mapping` defines how those CUDA indices correspond to row-major
+    output coordinates. `control_flow` records whether output/K-tail
+    predicates are required and how the K reduction is traversed. `epilogue`
+    records the output transformation after accumulation.
 
-    Concrete thread coordinates, launch dim3 values and memory mapping are
+    v0.15's backend uses these fields to emit a first naive global-memory CUDA
+    kernel. Shared-memory/register tiling and vectorized memory movement remain
     intentionally deferred.
     """
 
@@ -96,6 +161,9 @@ class CUDAKernelPlan:
     tile: GEMMTile | None = None
     schedule: GEMMSchedule | None = None
     block_mapping: GEMMBlockMapping | None = None
+    thread_mapping: GEMMThreadMapping | None = None
+    control_flow: GEMMControlFlow | None = None
+    epilogue: GEMMEpilogue | None = None
     attrs: dict[str, Any] = field(default_factory=dict)
 
 

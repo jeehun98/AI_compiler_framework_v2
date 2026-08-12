@@ -1,3 +1,5 @@
+import numpy as np
+
 from aicf import compile, nn
 from aicf.frontend.tensor import TensorSpec
 
@@ -19,8 +21,10 @@ def test_mock_compile_pipeline():
     )
 
     exe = compile(model, [TensorSpec((2, 4), name="x")])
-    result = exe.run()
-    assert result["status"] == "mock"
+    x = np.zeros((2, 4), dtype=np.float32)
+    result = exe.run(x)
+    assert result["status"] == "host_bound"
+    assert result["launched"] is False
     assert result["kernels"] == [
         "kernel_0_fused_gemm_bias_relu",
     ]
