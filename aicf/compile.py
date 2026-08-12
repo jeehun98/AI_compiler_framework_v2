@@ -9,6 +9,7 @@ from .compiler.passes.fusion import FusionPass
 from .lowering.cuda.lower import lower_to_cuda
 from .backend.cuda.codegen.generator import codegen
 from .backend.cuda.compiler import compile_with_nvrtc
+from .backend.cuda.driver import load_with_cuda_driver
 from .runtime.bindings import build_runtime_signature
 from .runtime.executable import Executable
 from .diagnostics.events import emit
@@ -24,6 +25,9 @@ def compile(
     cuda_compile=False,
     cuda_arch=None,
     nvrtc_library=None,
+    cuda_load=False,
+    cuda_device=0,
+    cuda_driver_library=None,
 ):
     context = CompileContext(target=target, diagnostics=diagnostics)
     input_specs = tuple(input_specs)
@@ -71,6 +75,9 @@ def compile(
     image = codegen(lowered)
     emit(context, "backend.codegen", image)
 
+    if cuda_load and not cuda_compile:
+        raise ValueError("cuda_load=True requires cuda_compile=True")
+
     compiled_image = None
     if cuda_compile:
         compiled_image = compile_with_nvrtc(
@@ -79,6 +86,15 @@ def compile(
             library_path=nvrtc_library,
         )
         emit(context, "backend.compiled", compiled_image)
+
+    loaded_image = None
+    if cuda_load:
+        loaded_image = load_with_cuda_driver(
+            compiled_image,
+            device_ordinal=cuda_device,
+            library_path=cuda_driver_library,
+        )
+        emit(context, "backend.loaded", loaded_image)
 
     signature = build_runtime_signature(
         module,
@@ -90,4 +106,5 @@ def compile(
         image,
         signature,
         compiled_image=compiled_image,
+        loaded_image=loaded_image,
     )
