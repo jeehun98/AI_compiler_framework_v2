@@ -1,5 +1,6 @@
-"""AICF Labs: operator-marking frontend research and CUDA execution observation."""
+"""AICF Labs: semantic candidate generation and experiment-driven execution exploration."""
 
+from . import nn, ops
 from .contracts import (
     ExperimentRecord,
     ImplementationSpec,
@@ -7,11 +8,19 @@ from .contracts import (
     TensorSpec,
     WorkloadSpec,
 )
+from .graph import Graph, GraphBuilder, capture
+from .tensor import Tensor
 
 __all__ = [
     "ExperimentRecord",
+    "Graph",
+    "GraphBuilder",
     "ImplementationSpec",
     "NumericalContract",
+    "Tensor",
     "TensorSpec",
     "WorkloadSpec",
+    "capture",
+    "nn",
+    "ops",
 ]
