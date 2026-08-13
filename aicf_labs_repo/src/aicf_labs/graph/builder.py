@@ -62,8 +62,16 @@ def current_builder() -> GraphBuilder | None:
     return _CURRENT.get()
 
 
-def capture(model, x: Tensor) -> Graph:
+def capture(model, *inputs: Tensor) -> Graph:
+    if not inputs:
+        raise ValueError("capture requires at least one Tensor input")
+    if not all(isinstance(tensor, Tensor) for tensor in inputs):
+        raise TypeError("capture inputs must be Tensor instances")
+
     builder = GraphBuilder()
     with builder.activate():
-        y = model(x)
-    return builder.finish(y)
+        output = model(*inputs)
+
+    if not isinstance(output, Tensor):
+        raise TypeError("captured model must return a Tensor")
+    return builder.finish(output)
