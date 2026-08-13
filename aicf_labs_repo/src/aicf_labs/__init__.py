@@ -1,6 +1,7 @@
 """AICF Labs: semantic candidate generation and experiment-driven execution exploration."""
 
-from . import nn, ops
+from . import ops
+from . import nn
 from .contracts import (
     ExperimentRecord,
     ImplementationSpec,
