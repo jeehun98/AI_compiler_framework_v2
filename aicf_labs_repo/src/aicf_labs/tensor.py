@@ -26,3 +26,17 @@ class Tensor:
 
     def _bind(self, value: "Value") -> "Tensor":
         return replace(self, _value=value)
+
+    def __add__(self, other: "Tensor") -> "Tensor":
+        if not isinstance(other, Tensor):
+            return NotImplemented
+        from .ops import add
+
+        return add(self, other)
+
+    def __radd__(self, other: "Tensor") -> "Tensor":
+        if not isinstance(other, Tensor):
+            return NotImplemented
+        from .ops import add
+
+        return add(other, self)
