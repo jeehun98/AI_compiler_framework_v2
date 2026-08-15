@@ -76,3 +76,68 @@ AST는 Clang으로 독립 추출하며, PTX·CUBIN·SASS는 NVCC 계열 도구�
 스크립트는 `fma.cu`를 executable 하나로 빌드한 뒤 분리 구현과 융합 구현의
 평균 실행 시간을 출력한다. 생성 파일은 `operators/fma/build/` 아래에만
 생기며 Git에 포함되지 않는다.
+
+## Benchmark와 validation
+
+Benchmark는 큰 입력에서 separated와 fused kernel 실행 시간만 측정한다.
+입력 생성, host/device 복사, CPU reference 계산과 결과 비교는 측정 구간에
+포함되지 않는다. 두 구현은 같은 non-zero 입력과 서로 다른 output buffer를
+사용한다.
+
+Validation은 작은 별도 입력에서 각 구현을 한 번씩 실행하고 FP16 결과를
+비교한다. 직접 executable을 실행할 때의 인자는 다음과 같다.
+
+```text
+fma.exe [benchmark_elements] [iterations] [validation_elements] [seed]
+```
+
+기본값은 `16777216`, `100`, `4096`, `12345`다. PowerShell에서는 다음처럼
+선택적으로 전달할 수 있다.
+
+```powershell
+.\operators\fma\run.ps1 `
+  -Elements 1048576 `
+  -Iterations 20 `
+  -ValidationElements 1024 `
+  -Seed 12345
+```
+
+Validation case는 `ordinary`, `cancellation`, `range_stress`, `special`이다.
+Reference는 FP16으로 양자화된 입력을 double로 변환한 뒤 `a * b + c`로
+계산한다.
+
+Bitwise equality는 FP16의 16-bit 표현이 같은지를 뜻한다. Numerical
+tolerance는 유한 결과의 오차가 허용 범위인지 판단하므로 서로 다른
+개념이다. 기본 finite 정책은 다음과 같다.
+
+```text
+|separated - fused| <= 2^-9 + 2^-9 * |double reference|
+relative denominator = max(|double reference|, 2^-14)
+```
+
+`2^-9`는 1 근처에서 약 두 FP16 ULP를 허용하기 위한 보수적인 시작값이다.
+NaN과 Inf는 별도 classification으로 비교한다. 분리 Mul/Add는 곱셈과
+덧셈에서 각각 반올림하지만 FMA는 마지막에 한 번 반올림하므로 bitwise
+차이가 정상적으로 나타날 수 있다. 따라서 출력의 bitwise difference rate는
+두 구현의 차이율이며 incorrect rate가 아니다.
+
+프로그램은 관찰 결과와 다음 네 가지 policy verdict를 분리해 모두 출력한다.
+
+- `strict_bitwise`: 모든 FP16 bit pattern이 같은지 판단한다.
+- `finite_tolerance`: 둘 다 finite이고 reference를 비교할 수 있는 결과만
+  tolerance로 판단한다. classification 차이는 이 정책의 범위 밖이다.
+- `classification_preserving`: finite, Inf, NaN 분류가 같은지 판단한다.
+- `accuracy_oriented_contraction`: reference-comparable 결과에서 fused가 더
+  나쁜 사례가 없고 finite tolerance를 만족하는지 관찰한다.
+
+기본 실행은 특정 정책 하나를 전체 정답으로 선택하지 않는다. CUDA 오류,
+잘못된 입력, allocation/copy/kernel 오류는 exit code 1이지만, 비교가 정상적으로
+끝난 뒤 어떤 정책이 `REJECTED`인 것은 실행 오류가 아니므로 exit code 0이다.
+
+`range_stress`에서는 separated 구현의 FP16 intermediate multiplication이
+Inf로 overflow한 뒤 덧셈되는 반면, fused FMA는 중간 FP16 반올림과 overflow
+없이 finite 최종 결과를 만들 수 있다. 이때의 classification divergence는 두
+구현의 FP16 의미 차이로 기록한다. `accuracy_oriented_contraction` verdict도
+선택한 입력 case, seed와 validation 크기에서 얻은 관찰이며 모든 FP16 입력에
+대한 증명이 아니다. 결과를 비교하거나 문서화할 때는 GPU, CUDA Toolkit 버전,
+seed와 case별 validation element 수를 함께 기록해야 한다.
