@@ -2,8 +2,8 @@
 
 CUDA operator 구현을 하나씩 직접 작성하고 실행해 보는 최소 실험 저장소다.
 
-현재는 FMA 하나만 다룬다. Frontend, backend registry, mask, AST, PTX, SASS
-분석 구조는 사용하지 않는다.
+현재는 FMA 하나만 다룬다. Frontend, backend registry, mask 또는 공통 분석
+framework는 사용하지 않고, CUDA 도구가 만든 원본 artifact만 저장한다.
 
 ## 구조
 
@@ -12,7 +12,10 @@ aicf_labs_repo/
 ├─ README.md
 └─ operators/
    └─ fma/
+      ├─ artifacts/
+      ├─ build.ps1
       ├─ fma.cu
+      ├─ observe.ps1
       └─ run.ps1
 ```
 
@@ -56,8 +59,13 @@ output[i] = fma(a[i], b[i], c[i])
 저장소 루트에서 실행한다.
 
 ```powershell
+.\operators\fma\build.ps1
 .\operators\fma\run.ps1
+.\operators\fma\observe.ps1
 ```
+
+AST는 Clang으로 독립 추출하며, PTX·CUBIN·SASS는 NVCC 계열 도구로
+추출한다. 이들을 하나의 직선형 compiler pipeline으로 취급하지 않는다.
 
 작은 입력으로 빠르게 확인하려면:
 
