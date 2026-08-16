@@ -24,15 +24,15 @@ try {
 
     $executablePath = (Resolve-Path -LiteralPath $Executable).Path
     $executableDirectory = Split-Path -Parent $executablePath
+    $operatorDirectory = if ((Split-Path -Leaf $executableDirectory) -eq "build") {
+        Split-Path -Parent $executableDirectory
+    } else {
+        $executableDirectory
+    }
     if ([string]::IsNullOrWhiteSpace($Name)) {
         $Name = [System.IO.Path]::GetFileNameWithoutExtension($executablePath)
     }
     if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-        $operatorDirectory = if ((Split-Path -Leaf $executableDirectory) -eq "build") {
-            Split-Path -Parent $executableDirectory
-        } else {
-            $executableDirectory
-        }
         $OutputDirectory = Join-Path $operatorDirectory "runtime"
     }
 
@@ -57,8 +57,10 @@ try {
     }
 
     $ncuArguments = @(
-        "--set", "basic",
+        "--set", "detailed",
         "--force-overwrite",
+        "--import-source", "yes",
+        "--source-folders", $operatorDirectory,
         "--export", $exportPath,
         $executablePath
     ) + $Arguments

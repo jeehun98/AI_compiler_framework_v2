@@ -11,6 +11,7 @@ $nvccArguments = @(
     "-O3",
     "-arch=sm_86",
     "--std=c++17",
+    "-lineinfo",
     "-Xcompiler=/wd4819",
     $sourcePath,
     "-o",

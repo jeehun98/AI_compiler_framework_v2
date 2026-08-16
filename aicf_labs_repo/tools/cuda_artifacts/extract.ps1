@@ -48,10 +48,10 @@ try {
 
     $nvcc = (Get-Command nvcc -ErrorAction Stop).Source
     $cuobjdump = (Get-Command cuobjdump -ErrorAction Stop).Source
-    $commonArguments = @("-O3", "-arch=$Architecture", "--std=c++17", "-Xcompiler=/wd4819")
+    $commonArguments = @("-O3", "-arch=$Architecture", "--std=c++17", "-lineinfo", "-Xcompiler=/wd4819")
 
     Invoke-CheckedNativeCommand "PTX generation" $nvcc `
-        ($commonArguments + @("-ptx", $sourcePath, "-o", $ptxPath))
+        ($commonArguments + @("-src-in-ptx", "-ptx", $sourcePath, "-o", $ptxPath))
     Invoke-CheckedNativeCommand "CUBIN generation" $nvcc `
         ($commonArguments + @("-cubin", $sourcePath, "-o", $cubinPath))
 

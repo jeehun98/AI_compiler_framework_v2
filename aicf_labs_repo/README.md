@@ -14,7 +14,9 @@ aicf_labs_repo/
    └─ fma/
       ├─ artifacts/
       ├─ build.ps1
+      ├─ correlate.ps1
       ├─ fma.cu
+      ├─ measure.ps1
       ├─ observe.ps1
       └─ run.ps1
 ```
@@ -69,10 +71,17 @@ Nsight Compute runtime report를 생성하려면:
 ```powershell
 .\operators\fma\build.ps1
 .\operators\fma\measure.ps1
+.\operators\fma\observe.ps1
+.\operators\fma\correlate.ps1
 ```
 
-AST는 Clang으로 독립 추출하며, PTX·CUBIN·SASS는 NVCC 계열 도구로
-추출한다. 이들을 하나의 직선형 compiler pipeline으로 취급하지 않는다.
+Static correlation은 CUDA source, PTX, SASS offset을 line metadata로
+연결한다. Runtime correlation은 같은 SASS offset을 runtime PC와 detailed
+SourceCounters에 연결한다. Nsight Compute report 내부 PTX source는 현재
+사용할 수 없으므로 두 경로는 `kernel + SASS offset`을 공통 key로 사용한다.
+FMA correlation은 SASS operand의 일반 GPR read/write와 가장 가까운 선행
+definition을 이용해 kernel 내부 producer-consumer edge도 기록한다. Predicate,
+uniform/special register와 memory alias dependency는 이 최소 probe의 범위 밖이다.
 
 작은 입력으로 빠르게 확인하려면:
 
