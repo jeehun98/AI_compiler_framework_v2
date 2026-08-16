@@ -64,6 +64,13 @@ output[i] = fma(a[i], b[i], c[i])
 .\operators\fma\observe.ps1
 ```
 
+Nsight Compute runtime report를 생성하려면:
+
+```powershell
+.\operators\fma\build.ps1
+.\operators\fma\measure.ps1
+```
+
 AST는 Clang으로 독립 추출하며, PTX·CUBIN·SASS는 NVCC 계열 도구로
 추출한다. 이들을 하나의 직선형 compiler pipeline으로 취급하지 않는다.
 
@@ -71,6 +78,12 @@ AST는 Clang으로 독립 추출하며, PTX·CUBIN·SASS는 NVCC 계열 도구�
 
 ```powershell
 .\operators\fma\run.ps1 -Elements 1048576 -Iterations 20
+```
+
+CUDA 소스에서 PTX, CUBIN, SASS를 공통 도구로 생성하려면:
+
+```powershell
+.\tools\cuda_artifacts\extract.ps1   -Source .\operators\fma\fma.cu
 ```
 
 스크립트는 `fma.cu`를 executable 하나로 빌드한 뒤 분리 구현과 융합 구현의

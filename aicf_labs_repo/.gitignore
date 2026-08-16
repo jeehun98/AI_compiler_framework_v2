@@ -1,2 +1,3 @@
 operators/*/build/
 operators/*/artifacts/
+operators/*/runtime/
