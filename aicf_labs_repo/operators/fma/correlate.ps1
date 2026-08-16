@@ -21,12 +21,11 @@ try {
     . (Join-Path $repositoryRoot "tools/cuda_artifacts/sass_dataflow.ps1")
 
     $sourcePath = Join-Path $PSScriptRoot "fma.cu"
-    $ptxPath = Join-Path $PSScriptRoot "artifacts/fma.ptx"
     $cubinPath = Join-Path $PSScriptRoot "artifacts/fma.cubin"
     $runtimePath = Join-Path $PSScriptRoot "runtime/fma_detailed_sass.txt"
     $outputPath = Join-Path $PSScriptRoot "runtime/fma_correlation.txt"
 
-    foreach ($path in @($sourcePath, $ptxPath, $cubinPath, $runtimePath)) {
+    foreach ($path in @($sourcePath, $cubinPath, $runtimePath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Required correlation input does not exist: $path"
         }
@@ -37,11 +36,6 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "nvdisasm --print-line-info-inline failed with exit code $LASTEXITCODE."
     }
-    $ptxSass = @(& $nvdisasm --print-line-info-ptx $cubinPath 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "nvdisasm --print-line-info-ptx failed with exit code $LASTEXITCODE."
-    }
-
     $sassMatchInfo = $cudaSass |
         Select-String -Pattern '^\s*/\*([0-9a-fA-F]+)\*/\s+HFMA2\s+(.+?)\s*;' |
         Select-Object -First 1
@@ -62,28 +56,6 @@ try {
     }
     $cudaLine = [int]$cudaLineMatch.Groups[1].Value
     $cudaSource = (Get-Content -LiteralPath $sourcePath)[$cudaLine - 1].Trim()
-
-    $ptxSassMatchInfo = $ptxSass |
-        Select-String -Pattern '^\s*/\*([0-9a-fA-F]+)\*/\s+HFMA2\s+(.+?)\s*;' |
-        Select-Object -First 1
-    $embeddedPtxMatch = Find-PreviousMatch `
-        $ptxSass `
-        ($ptxSassMatchInfo.LineNumber - 2) `
-        'File "\.nv_debug_ptx_txt", line (\d+)'
-    if (-not $embeddedPtxMatch) {
-        throw "PTX line metadata for HFMA2 was not found. Run observe.ps1 after a -lineinfo build."
-    }
-
-    $ptxMatchInfo = Select-String -LiteralPath $ptxPath -SimpleMatch "fma.rn.f16x2" |
-        Select-Object -First 1
-    if (-not $ptxMatchInfo) {
-        throw "fma.rn.f16x2 was not found in the PTX artifact."
-    }
-    $ptxLines = @(Get-Content -LiteralPath $ptxPath)
-    $ptxLocMatch = Find-PreviousMatch `
-        $ptxLines `
-        ($ptxMatchInfo.LineNumber - 2) `
-        '^\s*\.loc\s+(.+)$'
 
     $runtimeMatchInfo = Select-String `
         -LiteralPath $runtimePath `
@@ -149,13 +121,7 @@ try {
         "line: $cudaLine",
         "source: $cudaSource",
         "",
-        "[PTX]",
-        "standalone line: $($ptxMatchInfo.LineNumber)",
-        "loc: $($ptxLocMatch.Groups[1].Value.Trim())",
-        "instruction: $($ptxMatchInfo.Line.Trim())",
-        "",
         "[SASS]",
-        "embedded PTX line: $($embeddedPtxMatch.Groups[1].Value)",
         "function-relative offset: 0x$sassOffsetHex",
         "instruction: $sassInstruction",
         "",
@@ -178,14 +144,12 @@ try {
         "predicated-on threads executed: $($runtimeMatch.Groups[8].Value)",
         "",
         "[Relations]",
-        "CUDA -> PTX: line metadata (.loc/inlined_at); one-to-many or many-to-one allowed",
-        "PTX -> SASS: .nv_debug_line_sass metadata; standalone and embedded PTX line numbers differ",
+        "CUDA -> SASS: CUBIN debug line metadata; one source line may map to multiple instructions",
         "SASS -> Runtime PC: kernel base PC + function-relative offset; exact instruction matched",
         "Runtime PC -> observations: detailed SourceCounters row at the matched PC",
         "GPR dataflow: nearest preceding definition within the same kernel; register overwrite respected",
         "",
         "[Known limitation]",
-        "Nsight Compute reports 'PTX source is not available'; direct report-internal PTX -> PC is unavailable.",
         "Dataflow currently covers ordinary GPR R0..Rn only; predicates, uniform/special registers,",
         "64-bit register-pair expansion, path-sensitive CFG merges, and memory alias dependencies are excluded."
     )

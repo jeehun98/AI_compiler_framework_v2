@@ -3,7 +3,8 @@ param(
     [string]$Source,
     [string]$OutputDirectory,
     [string]$Name,
-    [string]$Architecture = "sm_86"
+    [string]$Architecture = "sm_86",
+    [switch]$IncludePtx
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,16 +43,14 @@ try {
 
     $outputPath = [System.IO.Path]::GetFullPath($OutputDirectory)
     New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
-    $ptxPath = Join-Path $outputPath "$Name.ptx"
     $cubinPath = Join-Path $outputPath "$Name.cubin"
     $sassPath = Join-Path $outputPath "$Name.sass"
+    $ptxPath = Join-Path $outputPath "$Name.ptx"
 
     $nvcc = (Get-Command nvcc -ErrorAction Stop).Source
     $cuobjdump = (Get-Command cuobjdump -ErrorAction Stop).Source
     $commonArguments = @("-O3", "-arch=$Architecture", "--std=c++17", "-lineinfo", "-Xcompiler=/wd4819")
 
-    Invoke-CheckedNativeCommand "PTX generation" $nvcc `
-        ($commonArguments + @("-src-in-ptx", "-ptx", $sourcePath, "-o", $ptxPath))
     Invoke-CheckedNativeCommand "CUBIN generation" $nvcc `
         ($commonArguments + @("-cubin", $sourcePath, "-o", $cubinPath))
 
@@ -64,10 +63,17 @@ try {
     }
     $sassOutput | Set-Content -LiteralPath $sassPath -Encoding utf8
 
+    if ($IncludePtx) {
+        Invoke-CheckedNativeCommand "PTX generation" $nvcc `
+            ($commonArguments + @("-src-in-ptx", "-ptx", $sourcePath, "-o", $ptxPath))
+    }
+
     Write-Host "CUDA artifact extraction completed:"
-    Write-Host "PTX:  $ptxPath"
     Write-Host "CUBIN: $cubinPath"
     Write-Host "SASS:  $sassPath"
+    if ($IncludePtx) {
+        Write-Host "PTX (optional): $ptxPath"
+    }
     exit 0
 } catch {
     [Console]::Error.WriteLine("CUDA artifact extraction failed: $($_.Exception.Message)")

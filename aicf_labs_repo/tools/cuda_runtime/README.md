@@ -25,14 +25,13 @@
 Correlation의 경계는 다음과 같다.
 
 ```text
-Static:  CUDA source <-> PTX <-> SASS offset
+Static:  CUDA source <-> SASS offset
 Runtime: SASS offset <-> runtime PC <-> SourceCounters
 ```
 
-두 경로는 `kernel + SASS offset`으로 연결한다. CUDA/PTX/SASS lowering은
-1:1이라고 가정하지 않는다. 현재 Nsight Compute report의 PTX source view는
-`PTX source is not available`을 반환하므로 report 내부의 직접적인 PTX-PC
-mapping은 제공하지 않는다.
+두 경로는 `kernel + SASS offset`으로 연결한다. 한 CUDA source line은 여러
+SASS instruction에 대응할 수 있다. PTX는 optional diagnostic artifact이며
+이 runtime correlation의 입력이 아니다.
 
 FMA correlation summary는 operator 전용 스크립트로 재생성한다.
 

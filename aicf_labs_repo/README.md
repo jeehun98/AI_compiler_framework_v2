@@ -75,13 +75,18 @@ Nsight Compute runtime report를 생성하려면:
 .\operators\fma\correlate.ps1
 ```
 
-Static correlation은 CUDA source, PTX, SASS offset을 line metadata로
-연결한다. Runtime correlation은 같은 SASS offset을 runtime PC와 detailed
-SourceCounters에 연결한다. Nsight Compute report 내부 PTX source는 현재
-사용할 수 없으므로 두 경로는 `kernel + SASS offset`을 공통 key로 사용한다.
+Primary observation은 CUDA source를 CUBIN line metadata를 통해 SASS offset에
+연결하고, 같은 offset을 runtime PC와 detailed SourceCounters에 연결한다.
 FMA correlation은 SASS operand의 일반 GPR read/write와 가장 가까운 선행
 definition을 이용해 kernel 내부 producer-consumer edge도 기록한다. Predicate,
 uniform/special register와 memory alias dependency는 이 최소 probe의 범위 밖이다.
+
+```text
+CUDA Source -> SASS -> SASS Dataflow -> Runtime Observation
+```
+
+PTX는 compiler lowering을 별도로 확인할 때만 생성하는 optional diagnostic
+artifact이며 기본 observe/correlate/runtime workflow의 입력이 아니다.
 
 작은 입력으로 빠르게 확인하려면:
 
@@ -89,11 +94,13 @@ uniform/special register와 memory alias dependency는 이 최소 probe의 범�
 .\operators\fma\run.ps1 -Elements 1048576 -Iterations 20
 ```
 
-CUDA 소스에서 PTX, CUBIN, SASS를 공통 도구로 생성하려면:
+CUDA 소스에서 canonical CUBIN과 SASS를 생성하려면:
 
 ```powershell
 .\tools\cuda_artifacts\extract.ps1   -Source .\operators\fma\fma.cu
 ```
+
+PTX diagnostic도 필요하면 `-IncludePtx`를 추가한다.
 
 스크립트는 `fma.cu`를 executable 하나로 빌드한 뒤 분리 구현과 융합 구현의
 평균 실행 시간을 출력한다. 생성 파일은 `operators/fma/build/` 아래에만
