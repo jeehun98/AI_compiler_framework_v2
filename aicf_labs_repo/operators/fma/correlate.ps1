@@ -1,82 +1,22 @@
+param(
+    [string]$OutputPath
+)
+
 $ErrorActionPreference = "Stop"
 
-function Find-PreviousMatch {
+function Get-FmaDataflow {
     param(
-        [string[]]$Lines,
-        [int]$StartIndex,
-        [string]$Pattern
+        [string]$CubinPath,
+        [string]$KernelName
     )
 
-    for ($index = $StartIndex; $index -ge 0; $index--) {
-        $match = [regex]::Match($Lines[$index], $Pattern)
-        if ($match.Success) {
-            return $match
-        }
-    }
-    return $null
-}
-
-try {
-    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-    . (Join-Path $repositoryRoot "tools/cuda_artifacts/sass_dataflow.ps1")
-
-    $sourcePath = Join-Path $PSScriptRoot "fma.cu"
-    $cubinPath = Join-Path $PSScriptRoot "artifacts/fma.cubin"
-    $runtimePath = Join-Path $PSScriptRoot "runtime/fma_detailed_sass.txt"
-    $outputPath = Join-Path $PSScriptRoot "runtime/fma_correlation.txt"
-
-    foreach ($path in @($sourcePath, $cubinPath, $runtimePath)) {
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            throw "Required correlation input does not exist: $path"
-        }
-    }
-
-    $nvdisasm = (Get-Command nvdisasm -ErrorAction Stop).Source
-    $cudaSass = @(& $nvdisasm --print-line-info-inline $cubinPath 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "nvdisasm --print-line-info-inline failed with exit code $LASTEXITCODE."
-    }
-    $sassMatchInfo = $cudaSass |
-        Select-String -Pattern '^\s*/\*([0-9a-fA-F]+)\*/\s+HFMA2\s+(.+?)\s*;' |
-        Select-Object -First 1
-    if (-not $sassMatchInfo) {
-        throw "HFMA2 was not found in the line-info CUBIN."
-    }
-    $sassMatch = $sassMatchInfo.Matches[0]
-    $sassOffsetHex = $sassMatch.Groups[1].Value.ToLowerInvariant()
-    $sassOffset = [Convert]::ToInt64($sassOffsetHex, 16)
-    $sassInstruction = "HFMA2 $($sassMatch.Groups[2].Value.Trim())"
-
-    $cudaLineMatch = Find-PreviousMatch `
-        $cudaSass `
-        ($sassMatchInfo.LineNumber - 2) `
-        'File ".*fma\.cu", line (\d+)'
-    if (-not $cudaLineMatch) {
-        throw "CUDA line metadata for HFMA2 was not found. Run observe.ps1 after a -lineinfo build."
-    }
-    $cudaLine = [int]$cudaLineMatch.Groups[1].Value
-    $cudaSource = (Get-Content -LiteralPath $sourcePath)[$cudaLine - 1].Trim()
-
-    $runtimeMatchInfo = Select-String `
-        -LiteralPath $runtimePath `
-        -Pattern '^\s*(0x[0-9a-fA-F]+)\s+(HFMA2\s+\S+,\s+\S+,\s+\S+,\s+\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)' |
-        Select-Object -First 1
-    if (-not $runtimeMatchInfo) {
-        throw "HFMA2 with detailed SourceCounters was not found in $runtimePath."
-    }
-    $runtimeMatch = $runtimeMatchInfo.Matches[0]
-    $runtimePcText = $runtimeMatch.Groups[1].Value.ToLowerInvariant()
-    $runtimePc = [Convert]::ToInt64($runtimePcText.Substring(2), 16)
-    $runtimeInstruction = $runtimeMatch.Groups[2].Value.Trim()
-    $kernelBasePc = $runtimePc - $sassOffset
-
-    if ($runtimeInstruction -ne $sassInstruction) {
-        throw "Static and runtime SASS differ: '$sassInstruction' vs '$runtimeInstruction'."
-    }
-
-    $dataflow = Get-SassGprDataflow -Cubin $cubinPath -KernelName "fma_half2"
+    $dataflow = Get-SassGprDataflow -Cubin $CubinPath -KernelName $KernelName
     $focusOffsets = @(0x00a0, 0x00c0, 0x00d0, 0x00f0, 0x0100)
     $focusNodes = @($dataflow.Nodes | Where-Object { $_.Offset -in $focusOffsets })
+    if ($focusNodes.Count -ne $focusOffsets.Count) {
+        throw "Expected FMA SASS dataflow nodes were not all found."
+    }
+
     $expectedEdges = @(
         @{ From = 0x00a0; Register = "R2"; To = 0x00f0 },
         @{ From = 0x00c0; Register = "R5"; To = 0x00f0 },
@@ -97,7 +37,22 @@ try {
         $focusEdges.Add($edge)
     }
 
-    $dataflowNodeLines = @($focusNodes | ForEach-Object {
+    return [pscustomobject]@{
+        Nodes = $focusNodes
+        Edges = @($focusEdges)
+    }
+}
+
+function Write-CorrelationSummary {
+    param(
+        [string]$OutputPath,
+        [string]$KernelName,
+        $SassMapping,
+        $Dataflow,
+        $RuntimeCounters
+    )
+
+    $dataflowNodeLines = @($Dataflow.Nodes | ForEach-Object {
         $readsText = if ($_.Reads.Count) { $_.Reads -join "," } else { "-" }
         $writesText = if ($_.Writes.Count) { $_.Writes -join "," } else { "-" }
         $sourceText = if ($_.SourceLocations.Count) {
@@ -109,21 +64,22 @@ try {
         }
         "$($_.OffsetText) $($_.Instruction) | reads: $readsText | writes: $writesText | live GPRs: $($_.LiveRegisters) | source: $sourceText"
     })
-    $dataflowEdgeLines = @($focusEdges | ForEach-Object {
+    $dataflowEdgeLines = @($Dataflow.Edges | ForEach-Object {
         "$($_.FromText) --$($_.Register)--> $($_.ToText)"
     })
 
     $lines = @(
-        "Kernel: fma_half2",
+        "Kernel: $KernelName",
         "",
         "[CUDA]",
         "file: operators/fma/fma.cu",
-        "line: $cudaLine",
-        "source: $cudaSource",
+        "line: $($SassMapping.SourceLine)",
+        "source: $($SassMapping.SourceText)",
         "",
         "[SASS]",
-        "function-relative offset: 0x$sassOffsetHex",
-        "instruction: $sassInstruction",
+        "source: operators/fma/artifacts/fma.sass",
+        "function-relative offset: 0x$($SassMapping.SassOffsetHex)",
+        "instruction: $($SassMapping.SassInstruction)",
         "",
         "[SASS DATAFLOW NODES]",
         $dataflowNodeLines,
@@ -133,27 +89,68 @@ try {
         "",
         "[Runtime]",
         "source: operators/fma/runtime/fma_detailed_sass.txt",
-        ("kernel base PC: 0x{0:x}" -f $kernelBasePc),
-        "runtime PC: $runtimePcText",
-        "instruction: $runtimeInstruction",
-        "warp stall sampling (all samples): $($runtimeMatch.Groups[3].Value)",
-        "warp stall sampling (not-issued samples): $($runtimeMatch.Groups[4].Value)",
-        "samples: $($runtimeMatch.Groups[5].Value)",
-        "instructions executed: $($runtimeMatch.Groups[6].Value)",
-        "thread instructions executed: $($runtimeMatch.Groups[7].Value)",
-        "predicated-on threads executed: $($runtimeMatch.Groups[8].Value)",
+        ("kernel base PC: 0x{0:x}" -f $RuntimeCounters.KernelBasePc),
+        "runtime PC: $($RuntimeCounters.RuntimePcText)",
+        "instruction: $($RuntimeCounters.Instruction)",
+        "warp stall sampling (all samples): $($RuntimeCounters.WarpStallSamples)",
+        "warp stall sampling (not-issued samples): $($RuntimeCounters.WarpStallNotIssuedSamples)",
+        "samples: $($RuntimeCounters.Samples)",
+        "instructions executed: $($RuntimeCounters.InstructionsExecuted)",
+        "thread instructions executed: $($RuntimeCounters.ThreadInstructionsExecuted)",
+        "predicated-on threads executed: $($RuntimeCounters.PredicatedOnThreadsExecuted)",
         "",
         "[Relations]",
-        "CUDA -> SASS: CUBIN debug line metadata; one source line may map to multiple instructions",
+        "CUDA -> SASS: CUBIN line metadata; one source line may map to multiple instructions",
         "SASS -> Runtime PC: kernel base PC + function-relative offset; exact instruction matched",
         "Runtime PC -> observations: detailed SourceCounters row at the matched PC",
-        "GPR dataflow: nearest preceding definition within the same kernel; register overwrite respected",
+        "GPR dataflow: nearest preceding definition in straight-line order within the same kernel",
         "",
         "[Known limitation]",
-        "Dataflow currently covers ordinary GPR R0..Rn only; predicates, uniform/special registers,",
-        "64-bit register-pair expansion, path-sensitive CFG merges, and memory alias dependencies are excluded."
+        "Dataflow covers ordinary GPR R0..Rn only. Predicates, uniform/special registers,",
+        "path-sensitive CFG analysis, memory aliases, and cross-kernel dependencies are excluded."
     )
-    $lines | Set-Content -LiteralPath $outputPath -Encoding utf8
+    $lines | Set-Content -LiteralPath $OutputPath -Encoding utf8
+}
+
+try {
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    . (Join-Path $repositoryRoot "tools/cuda_artifacts/sass_dataflow.ps1")
+    . (Join-Path $repositoryRoot "tools/cuda_runtime/correlation.ps1")
+
+    $kernelName = "fma_half2"
+    $sourcePath = Join-Path $PSScriptRoot "fma.cu"
+    $cubinPath = Join-Path $PSScriptRoot "artifacts/fma.cubin"
+    $sassPath = Join-Path $PSScriptRoot "artifacts/fma.sass"
+    $runtimePath = Join-Path $PSScriptRoot "runtime/fma_detailed_sass.txt"
+    $outputPath = if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+        Join-Path $PSScriptRoot "runtime/fma_correlation.txt"
+    } else {
+        [System.IO.Path]::GetFullPath($OutputPath)
+    }
+
+    foreach ($path in @($sourcePath, $cubinPath, $sassPath, $runtimePath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Required correlation input does not exist: $path"
+        }
+    }
+
+    $dataflow = Get-FmaDataflow -CubinPath $cubinPath -KernelName $kernelName
+    $sassMapping = Get-SassSourceMapping `
+        -SourcePath $sourcePath `
+        -SassPath $sassPath `
+        -Dataflow $dataflow `
+        -Opcode "HFMA2"
+    $runtimeCounters = Get-RuntimeCounters `
+        -RuntimePath $runtimePath `
+        -SassMapping $sassMapping `
+        -Opcode "HFMA2"
+    Write-CorrelationSummary `
+        -OutputPath $outputPath `
+        -KernelName $kernelName `
+        -SassMapping $sassMapping `
+        -Dataflow $dataflow `
+        -RuntimeCounters $runtimeCounters
+
     Write-Host "FMA correlation: $outputPath"
     exit 0
 } catch {

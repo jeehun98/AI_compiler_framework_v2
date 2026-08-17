@@ -7,15 +7,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-function Format-NativeCommand {
-    param([string]$Command, [string[]]$CommandArguments)
-
-    $items = @($Command) + $CommandArguments
-    return (($items | ForEach-Object {
-        if ($_ -match '[\s"]') { '"' + $_.Replace('"', '\"') + '"' } else { $_ }
-    }) -join ' ')
-}
+. (Join-Path $PSScriptRoot "common.ps1")
 
 try {
     if (-not (Test-Path -LiteralPath $Report -PathType Leaf)) {
@@ -26,20 +18,7 @@ try {
     $outputPath = [System.IO.Path]::GetFullPath($Output)
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $outputPath) | Out-Null
 
-    $ncuCommand = Get-Command ncu -ErrorAction SilentlyContinue
-    if ($ncuCommand) {
-        $ncu = $ncuCommand.Source
-    } else {
-        $ncu = Get-ChildItem `
-            -Path "C:\Program Files\NVIDIA Corporation\Nsight Compute *\ncu.exe" `
-            -File `
-            -ErrorAction SilentlyContinue |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1 -ExpandProperty FullName
-    }
-    if (-not $ncu) {
-        throw "Nsight Compute CLI (ncu) was not found."
-    }
+    $ncu = Get-NsightComputeCli
 
     $arguments = @("--import", $reportPath, "--page", "source", "--print-source", "sass")
     $displayCommand = Format-NativeCommand $ncu $arguments

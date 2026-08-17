@@ -3,18 +3,39 @@ param(
     [string]$Executable,
     [string]$OutputDirectory,
     [string]$Name,
+    [ValidateSet("basic", "detailed")]
+    [string]$Set = "detailed",
+    [switch]$ExportSummary,
     [string[]]$Arguments = @()
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "common.ps1")
 
-function Format-NativeCommand {
-    param([string]$Command, [string[]]$CommandArguments)
+function Export-NcuPage {
+    param(
+        [string]$Ncu,
+        [string]$Report,
+        [string]$Page,
+        [string]$Output,
+        [switch]$Csv
+    )
 
-    $items = @($Command) + $CommandArguments
-    return (($items | ForEach-Object {
-        if ($_ -match '[\s"]') { '"' + $_.Replace('"', '\"') + '"' } else { $_ }
-    }) -join ' ')
+    $exportArguments = @("--import", $Report, "--page", $Page)
+    if ($Csv) {
+        $exportArguments += "--csv"
+    }
+    $displayCommand = Format-NativeCommand $Ncu $exportArguments
+    Write-Host $displayCommand
+    $pageOutput = @(& $Ncu @exportArguments)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Nsight Compute $Page export failed with exit code $LASTEXITCODE.`nCommand: $displayCommand"
+    }
+    $pageOutput | Set-Content -LiteralPath $Output -Encoding utf8
+    if (-not (Test-Path -LiteralPath $Output -PathType Leaf) -or
+        (Get-Item -LiteralPath $Output).Length -eq 0) {
+        throw "Nsight Compute $Page export did not create a non-empty file: $Output"
+    }
 }
 
 try {
@@ -41,23 +62,10 @@ try {
     $exportPath = Join-Path $outputPath $Name
     $reportPath = "$exportPath.ncu-rep"
 
-    $ncuCommand = Get-Command ncu -ErrorAction SilentlyContinue
-    if ($ncuCommand) {
-        $ncu = $ncuCommand.Source
-    } else {
-        $ncu = Get-ChildItem `
-            -Path "C:\Program Files\NVIDIA Corporation\Nsight Compute *\ncu.exe" `
-            -File `
-            -ErrorAction SilentlyContinue |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1 -ExpandProperty FullName
-    }
-    if (-not $ncu) {
-        throw "Nsight Compute CLI (ncu) was not found on PATH or under C:\Program Files\NVIDIA Corporation\Nsight Compute *."
-    }
+    $ncu = Get-NsightComputeCli
 
     $ncuArguments = @(
-        "--set", "detailed",
+        "--set", $Set,
         "--force-overwrite",
         "--import-source", "yes",
         "--source-folders", $operatorDirectory,
@@ -75,6 +83,14 @@ try {
     }
 
     Write-Host "Nsight Compute report: $reportPath"
+    if ($ExportSummary) {
+        $textPath = Join-Path $outputPath "$Name.txt"
+        $csvPath = Join-Path $outputPath "$Name.csv"
+        Export-NcuPage -Ncu $ncu -Report $reportPath -Page "details" -Output $textPath
+        Export-NcuPage -Ncu $ncu -Report $reportPath -Page "raw" -Output $csvPath -Csv
+        Write-Host "Nsight Compute details: $textPath"
+        Write-Host "Nsight Compute raw CSV: $csvPath"
+    }
     exit 0
 } catch {
     [Console]::Error.WriteLine("CUDA runtime measurement failed: $($_.Exception.Message)")

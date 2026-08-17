@@ -1,24 +1,18 @@
+$ErrorActionPreference = "Stop"
+
 $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$executablePath = Join-Path $PSScriptRoot "build/fma.exe"
+$profileElements = 1048576
+$profileIterations = 1
+$validationElements = 120
+$seed = 12345
+$profileArguments = @(
+    "$profileElements",
+    "$profileIterations",
+    "$validationElements",
+    "$seed"
+)
 
-& (Join-Path $PSScriptRoot "build.ps1")
-if ($LASTEXITCODE -ne 0) {
-    [Console]::Error.WriteLine("FMA build failed; runtime measurement was not started.")
-    exit 1
-}
-
-& (Join-Path $repositoryRoot "tools/cuda_runtime/measure.ps1") `
-    -Executable $executablePath `
-    -OutputDirectory (Join-Path $PSScriptRoot "runtime") `
-    -Name "fma_detailed" `
-    -Arguments @("1048576", "1", "120", "12345")
-
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
-}
-
-& (Join-Path $repositoryRoot "tools/cuda_runtime/export_instructions.ps1") `
-    -Report (Join-Path $PSScriptRoot "runtime/fma_detailed.ncu-rep") `
-    -Output (Join-Path $PSScriptRoot "runtime/fma_detailed_sass.txt")
-
+& (Join-Path $repositoryRoot "tools/operator/measure.ps1") `
+    -Operator "fma" `
+    -Arguments $profileArguments
 exit $LASTEXITCODE
