@@ -1,0 +1,365 @@
+{
+  "schema_version": 1,
+  "identity": { "name": "relu", "category": "elementwise" },
+  "semantics": {
+    "arity": 1,
+    "kinds": ["unary", "elementwise", "nonlinear", "piecewise"],
+    "expression": "y = max(x, 0)"
+  },
+  "tensor": {
+    "input_count": 1,
+    "output_count": 1,
+    "input_shapes": ["X[d0, ..., dn]"],
+    "output_shape_rule": "shape(Y) = shape(X)",
+    "shape_preserving": true,
+    "rank_preserving": true,
+    "shape_changing": false,
+    "rank_changing": false,
+    "supports_broadcast": false,
+    "uses_reduction_axis": false,
+    "uses_permutation": false,
+    "layout_sensitive": false,
+    "element_independent": true,
+    "cross_element": false,
+    "cross_row": false,
+    "cross_channel": false,
+    "broadcast_axes": [],
+    "reduction_axes": [],
+    "permutation": [],
+    "input_layout": null,
+    "output_layout": null
+  },
+  "algebra": {
+    "commutative": null,
+    "mathematically_associative": null,
+    "distributive": null,
+    "idempotent": true,
+    "zero_preserving": true,
+    "one_preserving": true,
+    "monotonic": true,
+    "monotonic_direction": "nondecreasing",
+    "invertible": false,
+    "has_identity": null,
+    "identity_value": null,
+    "has_annihilator": null,
+    "annihilator_value": null
+  },
+  "numerical": {
+    "approximate_intrinsic": false,
+    "accumulation_sensitive": false,
+    "overflow_sensitive": false,
+    "underflow_sensitive": false,
+    "cancellation_sensitive": false,
+    "nan_sensitive": true,
+    "inf_sensitive": true,
+    "epsilon_required": false,
+    "mixed_precision_safe": null,
+    "floating_point_reassociation_safe": true,
+    "domain_constraints": []
+  },
+  "fusion": {
+    "producer_fusible": true,
+    "consumer_fusible": true,
+    "epilogue_fusible": true,
+    "prologue_fusible": true,
+    "requires_materialization": false,
+    "requires_global_sync": false,
+    "has_side_effect": false,
+    "cheap_to_recompute": true,
+    "expensive_to_recompute": false,
+    "conditions": [
+      "The fused schedule preserves the one-to-one output element mapping.",
+      "No consumer requires the unfused intermediate to be materialized.",
+      "The fused comparison preserves fmaxf behavior for NaN, signed zero, and infinity."
+    ]
+  },
+  "decomposition": [],
+  "evidence": [
+    {
+      "kind": "source", "file": "operators/relu/relu.cu",
+      "locator": "relu_fp32 body, source line 34", "match": "output[index] = fmaxf(input[index], 0.0F);",
+      "observation": "The source declares unary elementwise maximum against zero."
+    },
+    {
+      "kind": "source", "file": "operators/relu/relu.cu",
+      "locator": "relu_fp32 index calculation, source line 32", "match": "const int index = blockIdx.x * blockDim.x + threadIdx.x;",
+      "observation": "A flat input index maps to the same output index."
+    }
+  ],
+  "implementations": [
+    {
+      "name": "fp32_scalar",
+      "source": {
+        "file": "operators/relu/relu.cu", "kernel": "relu_fp32",
+        "evidence": [{
+          "kind": "source", "file": "operators/relu/relu.cu",
+          "locator": "kernel declaration, source line 30", "match": "__global__ void relu_fp32(const float* input, float* output,",
+          "observation": "The implementation is a single FP32 CUDA kernel."
+        }]
+      },
+      "dtype": { "inputs": ["fp32"], "output": "fp32", "accumulation": null },
+      "validation": {
+        "reference": "std::fmax(input[i], 0.0F)", "reference_precision": "fp32",
+        "absolute_tolerance": 0.000001, "relative_tolerance": 0.000001,
+        "evidence": [
+          {
+            "kind": "source", "file": "operators/relu/relu.cu",
+            "locator": "validation reference, source line 129", "match": "const float reference = std::fmax(input[i], 0.0F);",
+            "observation": "Validation uses an FP32 maximum-against-zero reference."
+          },
+          {
+            "kind": "source", "file": "operators/relu/relu.cu",
+            "locator": "validation tolerances, source lines 18-19", "match": "constexpr float kAbsoluteTolerance = 1.0e-6F;",
+            "observation": "The absolute tolerance is 1e-6; the adjacent relative tolerance is also 1e-6."
+          }
+        ]
+      },
+      "launch": {
+        "threads_per_block": 256, "grid_rule": "ceil(element_count / 256)", "elements_per_thread": 1,
+        "evidence": [{
+          "kind": "source", "file": "operators/relu/relu.cu",
+          "locator": "launch configuration, source lines 17 and 69-70", "match": "constexpr int kThreads = 256;",
+          "observation": "The block size is fixed at 256 threads and blocks_for implements ceiling division."
+        }]
+      },
+      "codegen": {
+        "declared": {
+          "properties": { "scalar_io": true, "vector_width": 1, "uses_fast_math": false },
+          "evidence": [{
+            "kind": "source", "file": "tools/cuda_artifacts/extract.ps1",
+            "locator": "commonArguments", "match": "$commonArguments = @",
+            "observation": "Artifact generation uses the common O3 command without --use_fast_math."
+          }]
+        },
+        "observed": {
+          "properties": { "scalar_global_load_store": true, "bounds_exit_predicate": true, "uses_fast_math": null },
+          "evidence": [{
+            "kind": "sass", "file": "operators/relu/artifacts/relu.sass",
+            "locator": "instruction offsets 0x0040-0x00c0", "match": "FMNMX R7, RZ, R2, !PT",
+            "observation": "The cubin contains a bounds predicate, scalar global access, and FP32 min/max against zero."
+          }]
+        },
+        "inferred": {
+          "properties": { "scalar_lowering_confirmed": true, "source_operation_lowering_supported": true },
+          "evidence": [{
+            "kind": "sass", "file": "operators/relu/artifacts/relu.sass",
+            "locator": "instruction offset 0x00b0", "match": "FMNMX R7, RZ, R2, !PT",
+            "observation": "The zero-valued FMNMX operand supports the declared fmaxf lowering; it does not establish semantics alone."
+          }]
+        }
+      },
+      "hardware": {
+        "declared": {
+          "properties": {
+            "uses_cuda_core": true, "uses_tensor_core": false, "uses_sfu": false,
+            "uses_shared_memory": false, "uses_constant_memory": false, "uses_local_memory": false,
+            "uses_warp_shuffle": false, "uses_warp_vote": false, "uses_barrier": false,
+            "uses_atomic": false, "uses_async_copy": false, "uses_vector_load": false, "uses_vector_store": false
+          },
+          "evidence": [{
+            "kind": "source", "file": "operators/relu/relu.cu",
+            "locator": "relu_fp32 body, source lines 30-35", "match": "output[index] = fmaxf(input[index], 0.0F);",
+            "observation": "The scalar source declares no Tensor Core, SFU, shared-memory, synchronization, atomic, or vector operation."
+          }]
+        },
+        "observed": {
+          "properties": {
+            "uses_cuda_core": true, "uses_tensor_core": false, "uses_sfu": false,
+            "uses_shared_memory": false, "uses_constant_memory": null, "uses_local_memory": false,
+            "uses_warp_shuffle": false, "uses_warp_vote": false, "uses_barrier": false,
+            "uses_atomic": false, "uses_async_copy": false, "uses_vector_load": false, "uses_vector_store": false
+          },
+          "evidence": [{
+            "kind": "sass", "file": "operators/relu/artifacts/relu.sass",
+            "locator": "relu_fp32 static instruction stream", "match": "FMNMX R7, RZ, R2, !PT",
+            "observation": "FMNMX is observed and HMMA, MUFU, LDS/STS, BAR, ATOM, SHFL, and vector memory instructions are absent. Constant-bank kernel parameter access is not classified as explicit constant-memory use."
+          }]
+        },
+        "inferred": {
+          "properties": {
+            "uses_cuda_core": true, "uses_tensor_core": false, "uses_sfu": false,
+            "uses_shared_memory": false, "uses_constant_memory": null, "uses_local_memory": false,
+            "uses_warp_shuffle": false, "uses_warp_vote": false, "uses_barrier": false,
+            "uses_atomic": false, "uses_async_copy": false, "uses_vector_load": false, "uses_vector_store": false
+          },
+          "evidence": [{
+            "kind": "runtime", "file": "operators/relu/runtime/relu_detailed_sass.txt",
+            "locator": "runtime-mapped min/max instruction", "match": "FMNMX R7, RZ, R2, !PT",
+            "observation": "Runtime Source/SASS mapping confirms execution of the non-Tensor-Core scalar lowering."
+          }]
+        }
+      },
+      "memory": {
+        "declared": {
+          "properties": {
+            "global_read": true, "global_write": true, "coalesced_read": true, "coalesced_write": true,
+            "strided_read": false, "strided_write": false, "gather_read": false, "scatter_write": false,
+            "shared_read": false, "shared_write": false, "shared_memory_tiling": false,
+            "reuses_input": false, "reuses_weights": null, "intermediate_materialization": false
+          },
+          "evidence": [{
+            "kind": "source", "file": "operators/relu/relu.cu",
+            "locator": "relu_fp32 flat indexing, source lines 32-34", "match": "output[index] = fmaxf(input[index], 0.0F);",
+            "observation": "Adjacent threads read and write adjacent FP32 elements with no shared-memory intermediate."
+          }]
+        },
+        "observed": {
+          "properties": {
+            "global_read": true, "global_write": true, "coalesced_read": null, "coalesced_write": null,
+            "strided_read": null, "strided_write": null, "gather_read": false, "scatter_write": false,
+            "shared_read": false, "shared_write": false, "shared_memory_tiling": false,
+            "reuses_input": false, "reuses_weights": null, "intermediate_materialization": false
+          },
+          "evidence": [{
+            "kind": "sass", "file": "operators/relu/artifacts/relu.sass",
+            "locator": "instruction offsets 0x0090 and 0x00c0", "match": "LDG.E R2, [R2.64]",
+            "observation": "One scalar global load and one scalar global store are present; SASS alone is not used to assert coalescing."
+          }]
+        },
+        "inferred": {
+          "properties": {
+            "global_read": true, "global_write": true, "coalesced_read": true, "coalesced_write": true,
+            "strided_read": false, "strided_write": false, "gather_read": false, "scatter_write": false,
+            "shared_read": false, "shared_write": false, "shared_memory_tiling": false,
+            "reuses_input": false, "reuses_weights": null, "intermediate_materialization": false
+          },
+          "evidence": [{
+            "kind": "source", "file": "operators/relu/relu.cu",
+            "locator": "thread-to-element mapping, source line 32", "match": "const int index = blockIdx.x * blockDim.x + threadIdx.x;",
+            "observation": "Source indexing and scalar LDG/STG support contiguous coalesced access for the dense buffers used by this executable."
+          }]
+        }
+      },
+      "parallel": {
+        "declared": {
+          "properties": {
+            "thread_independent": true, "warp_cooperative": false, "block_cooperative": false,
+            "grid_cooperative": false, "warp_reduction": false, "block_reduction": false,
+            "multi_pass": false, "one_thread_per_element": true, "one_warp_per_row": false,
+            "one_block_per_row": false, "tiled_execution": false
+          },
+          "evidence": [{
+            "kind": "source", "file": "operators/relu/relu.cu",
+            "locator": "relu_fp32 body, source lines 32-34", "match": "const int index = blockIdx.x * blockDim.x + threadIdx.x;",
+            "observation": "Each in-range thread computes exactly one independent output element."
+          }]
+        },
+        "observed": {
+          "properties": {
+            "thread_independent": true, "warp_cooperative": false, "block_cooperative": false,
+            "grid_cooperative": false, "warp_reduction": false, "block_reduction": false,
+            "multi_pass": false, "one_thread_per_element": true, "one_warp_per_row": false,
+            "one_block_per_row": false, "tiled_execution": false
+          },
+          "evidence": [{
+            "kind": "sass", "file": "operators/relu/artifacts/relu.sass",
+            "locator": "S2R index setup and complete instruction stream", "match": "S2R R3, SR_TID.X",
+            "observation": "The stream derives one flat index and contains no shuffle, barrier, shared-memory, reduction, or multi-pass motif."
+          }]
+        },
+        "inferred": {
+          "properties": {
+            "thread_independent": true, "warp_cooperative": false, "block_cooperative": false,
+            "grid_cooperative": false, "warp_reduction": false, "block_reduction": false,
+            "multi_pass": false, "one_thread_per_element": true, "one_warp_per_row": false,
+            "one_block_per_row": false, "tiled_execution": false
+          },
+          "evidence": [{
+            "kind": "source", "file": "operators/relu/relu.cu",
+            "locator": "relu_fp32 source and launch", "match": "relu_fp32<<<blocks, kThreads>>>(input, output, element_count);",
+            "observation": "Source mapping and the absence of cooperative SASS instructions confirm an independent one-thread-per-element implementation."
+          }]
+        }
+      },
+      "sass": {
+        "artifact": "operators/relu/artifacts/relu.sass", "architecture": "sm_86",
+        "observed": {
+          "instructions": ["LDG.E", "FMNMX", "STG.E"],
+          "features": {
+            "has_ffma": false, "has_hfma2": false, "has_hmma": false,
+            "has_mufu_exp2": false, "has_mufu_rcp": false, "has_mufu_rsqrt": false,
+            "has_minmax": true, "has_shuffle": false, "has_barrier": false,
+            "has_atomic": false, "has_shared_load": false, "has_shared_store": false,
+            "has_global_load": true, "has_global_store": true, "has_predicate": true,
+            "has_predicated_store": false, "has_async_copy": false,
+            "has_absolute_operand_modifier": false, "has_negated_register_operand": false
+          },
+          "counts": {
+            "instruction_count": 24, "register_count": null,
+            "global_load_count": 1, "global_store_count": 1,
+            "shared_load_count": 0, "shared_store_count": 0,
+            "ffma_count": 0, "hfma2_count": 0, "hmma_count": 0, "minmax_count": 1,
+            "barrier_count": 0, "atomic_count": 0, "branch_count": 1, "predicate_count": 1
+          },
+          "motifs": [{
+            "name": "minmax_against_zero", "offsets": ["0x00b0"],
+            "instructions": ["FMNMX R7, RZ, R2, !PT"]
+          }],
+          "evidence": [
+            {
+              "kind": "sass", "file": "operators/relu/artifacts/relu.sass",
+              "locator": "instruction offsets 0x0090-0x00c0", "match": "FMNMX R7, RZ, R2, !PT",
+              "observation": "The static cubin disassembly contains LDG.E, FMNMX against zero, and STG.E."
+            },
+            {
+              "kind": "runtime", "file": "operators/relu/runtime/relu_detailed_sass.txt",
+              "locator": "runtime Source/SASS mapping for relu_fp32", "match": "FMNMX R7, RZ, R2, !PT",
+              "observation": "Nsight Compute maps executed samples to the same lowering."
+            }
+          ]
+        },
+        "inferred": {
+          "properties": {
+            "declared_operation_lowering_supported": true,
+            "tensor_core_execution_confirmed": false,
+            "sfu_execution_confirmed": false
+          },
+          "evidence": [{
+            "kind": "source", "file": "operators/relu/relu.cu",
+            "locator": "relu_fp32 expression, source line 34", "match": "fmaxf(input[index], 0.0F)",
+            "observation": "Source semantics combined with FMNMX against zero supports, but SASS alone does not prove, ReLU lowering."
+          }]
+        }
+      },
+      "measurements": {
+        "artifacts": {
+          "report": "operators/relu/runtime/relu.ncu-rep",
+          "summary": "operators/relu/runtime/relu.txt",
+          "csv": "operators/relu/runtime/relu.csv",
+          "detailed_report": "operators/relu/runtime/relu_detailed.ncu-rep",
+          "detailed_sass": "operators/relu/runtime/relu_detailed_sass.txt"
+        },
+        "observed": {
+          "properties": {
+            "device": "NVIDIA GeForce RTX 3060", "compute_capability": "8.6",
+            "profiled_launch": "grid 4096 x block 256", "duration_us": 26.08,
+            "memory_throughput_pct": 88.30, "dram_throughput_pct": 88.30,
+            "compute_sm_throughput_pct": 16.49, "registers_per_thread": 16,
+            "static_shared_memory_bytes": 0, "dynamic_shared_memory_bytes": 0,
+            "achieved_occupancy_pct": 83.44
+          },
+          "evidence": [
+            {
+              "kind": "runtime", "file": "operators/relu/runtime/relu.txt",
+              "locator": "first profiled large launch", "match": "Memory Throughput                 %        88.30",
+              "observation": "The first 4096-block launch reports 88.30% memory and DRAM throughput versus 16.49% SM compute throughput."
+            },
+            {
+              "kind": "runtime", "file": "operators/relu/runtime/relu.txt",
+              "locator": "first launch statistics", "match": "Registers Per Thread             register/thread              16",
+              "observation": "The profiled implementation uses 16 registers per thread and zero static/dynamic shared memory."
+            }
+          ]
+        },
+        "inferred": {
+          "properties": { "bottleneck": "memory", "large_launch_characterized": true, "small_validation_launch_representative": false },
+          "evidence": [{
+            "kind": "runtime", "file": "operators/relu/runtime/relu.txt",
+            "locator": "Speed Of Light guidance for first launch", "match": "Start by analyzing DRAM in the Memory Workload Analysis section.",
+            "observation": "Nsight Compute identifies DRAM as the starting point for the first large benchmark launch; the later one-block validation launch is not used for this bottleneck classification."
+          }]
+        }
+      }
+    }
+  ]
+}

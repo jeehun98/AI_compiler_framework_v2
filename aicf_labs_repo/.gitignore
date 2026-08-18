@@ -1,3 +1,5 @@
 operators/*/build/
 operators/*/artifacts/
 operators/*/runtime/
+__pycache__/
+*.py[cod]

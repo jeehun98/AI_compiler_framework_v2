@@ -1,0 +1,427 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aicf.local/schemas/operator.schema.json",
+  "title": "AICF OperatorRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "semantics",
+    "tensor",
+    "algebra",
+    "numerical",
+    "fusion",
+    "decomposition",
+    "evidence",
+    "implementations"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "identity": { "$ref": "#/$defs/identity" },
+    "semantics": { "$ref": "#/$defs/semantics" },
+    "tensor": { "$ref": "#/$defs/tensor" },
+    "algebra": { "$ref": "#/$defs/algebra" },
+    "numerical": { "$ref": "#/$defs/numerical" },
+    "fusion": { "$ref": "#/$defs/fusion" },
+    "decomposition": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "evidence": { "$ref": "#/$defs/evidenceList" },
+    "implementations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/implementation" }
+    }
+  },
+  "$defs": {
+    "triState": { "type": ["boolean", "null"] },
+    "nullableString": { "type": ["string", "null"] },
+    "nullableNumber": { "type": ["number", "null"] },
+    "nullableInteger": { "type": ["integer", "null"] },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(operators|knowledge|tools)/"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "file", "locator", "match", "observation"],
+      "properties": {
+        "kind": { "enum": ["source", "sass", "runtime"] },
+        "file": { "$ref": "#/$defs/relativePath" },
+        "locator": { "type": "string", "minLength": 1 },
+        "match": { "type": "string", "minLength": 1 },
+        "observation": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidenceList": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "optionalEvidenceList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "category"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "category": {
+          "enum": [
+            "elementwise",
+            "reduction",
+            "layout",
+            "normalization",
+            "matrix",
+            "convolution",
+            "selection"
+          ]
+        }
+      }
+    },
+    "semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["arity", "kinds", "expression"],
+      "properties": {
+        "arity": { "type": "integer", "minimum": 1 },
+        "kinds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "elementwise", "unary", "binary", "ternary", "reduction",
+              "scan", "matrix_operation", "convolution", "normalization",
+              "layout_transform", "selection", "data_movement", "linear",
+              "affine", "bilinear", "nonlinear", "piecewise"
+            ]
+          }
+        },
+        "expression": { "type": "string", "minLength": 1 }
+      }
+    },
+    "tensor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_count", "output_count", "input_shapes", "output_shape_rule",
+        "shape_preserving", "rank_preserving", "shape_changing", "rank_changing",
+        "supports_broadcast", "uses_reduction_axis", "uses_permutation",
+        "layout_sensitive", "element_independent", "cross_element", "cross_row",
+        "cross_channel", "broadcast_axes", "reduction_axes", "permutation",
+        "input_layout", "output_layout"
+      ],
+      "properties": {
+        "input_count": { "type": "integer", "minimum": 1 },
+        "output_count": { "type": "integer", "minimum": 1 },
+        "input_shapes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "output_shape_rule": { "type": "string", "minLength": 1 },
+        "shape_preserving": { "$ref": "#/$defs/triState" },
+        "rank_preserving": { "$ref": "#/$defs/triState" },
+        "shape_changing": { "$ref": "#/$defs/triState" },
+        "rank_changing": { "$ref": "#/$defs/triState" },
+        "supports_broadcast": { "$ref": "#/$defs/triState" },
+        "uses_reduction_axis": { "$ref": "#/$defs/triState" },
+        "uses_permutation": { "$ref": "#/$defs/triState" },
+        "layout_sensitive": { "$ref": "#/$defs/triState" },
+        "element_independent": { "$ref": "#/$defs/triState" },
+        "cross_element": { "$ref": "#/$defs/triState" },
+        "cross_row": { "$ref": "#/$defs/triState" },
+        "cross_channel": { "$ref": "#/$defs/triState" },
+        "broadcast_axes": { "type": "array", "items": { "type": "string" } },
+        "reduction_axes": { "type": "array", "items": { "type": "string" } },
+        "permutation": { "type": "array", "items": { "type": "integer" } },
+        "input_layout": { "$ref": "#/$defs/nullableString" },
+        "output_layout": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "algebra": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commutative", "mathematically_associative", "distributive", "idempotent",
+        "zero_preserving", "one_preserving", "monotonic", "monotonic_direction",
+        "invertible", "has_identity", "identity_value", "has_annihilator",
+        "annihilator_value"
+      ],
+      "properties": {
+        "commutative": { "$ref": "#/$defs/triState" },
+        "mathematically_associative": { "$ref": "#/$defs/triState" },
+        "distributive": { "$ref": "#/$defs/triState" },
+        "idempotent": { "$ref": "#/$defs/triState" },
+        "zero_preserving": { "$ref": "#/$defs/triState" },
+        "one_preserving": { "$ref": "#/$defs/triState" },
+        "monotonic": { "$ref": "#/$defs/triState" },
+        "monotonic_direction": {
+          "type": ["string", "null"],
+          "enum": ["increasing", "nondecreasing", "decreasing", "nonincreasing", "not_monotonic", null]
+        },
+        "invertible": { "$ref": "#/$defs/triState" },
+        "has_identity": { "$ref": "#/$defs/triState" },
+        "identity_value": { "$ref": "#/$defs/nullableString" },
+        "has_annihilator": { "$ref": "#/$defs/triState" },
+        "annihilator_value": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "numerical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approximate_intrinsic", "accumulation_sensitive", "overflow_sensitive",
+        "underflow_sensitive", "cancellation_sensitive", "nan_sensitive",
+        "inf_sensitive", "epsilon_required", "mixed_precision_safe",
+        "floating_point_reassociation_safe", "domain_constraints"
+      ],
+      "properties": {
+        "approximate_intrinsic": { "$ref": "#/$defs/triState" },
+        "accumulation_sensitive": { "$ref": "#/$defs/triState" },
+        "overflow_sensitive": { "$ref": "#/$defs/triState" },
+        "underflow_sensitive": { "$ref": "#/$defs/triState" },
+        "cancellation_sensitive": { "$ref": "#/$defs/triState" },
+        "nan_sensitive": { "$ref": "#/$defs/triState" },
+        "inf_sensitive": { "$ref": "#/$defs/triState" },
+        "epsilon_required": { "$ref": "#/$defs/triState" },
+        "mixed_precision_safe": { "$ref": "#/$defs/triState" },
+        "floating_point_reassociation_safe": { "$ref": "#/$defs/triState" },
+        "domain_constraints": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "fusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "producer_fusible", "consumer_fusible", "epilogue_fusible",
+        "prologue_fusible", "requires_materialization", "requires_global_sync",
+        "has_side_effect", "cheap_to_recompute", "expensive_to_recompute",
+        "conditions"
+      ],
+      "properties": {
+        "producer_fusible": { "$ref": "#/$defs/triState" },
+        "consumer_fusible": { "$ref": "#/$defs/triState" },
+        "epilogue_fusible": { "$ref": "#/$defs/triState" },
+        "prologue_fusible": { "$ref": "#/$defs/triState" },
+        "requires_materialization": { "$ref": "#/$defs/triState" },
+        "requires_global_sync": { "$ref": "#/$defs/triState" },
+        "has_side_effect": { "$ref": "#/$defs/triState" },
+        "cheap_to_recompute": { "$ref": "#/$defs/triState" },
+        "expensive_to_recompute": { "$ref": "#/$defs/triState" },
+        "conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["properties", "evidence"],
+      "properties": {
+        "properties": { "type": "object" },
+        "evidence": { "$ref": "#/$defs/optionalEvidenceList" }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name", "source", "dtype", "validation", "launch", "codegen",
+        "hardware", "memory", "parallel", "sass", "measurements"
+      ],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "kernel", "evidence"],
+          "properties": {
+            "file": { "$ref": "#/$defs/relativePath" },
+            "kernel": { "type": "string", "minLength": 1 },
+            "evidence": { "$ref": "#/$defs/evidenceList" }
+          }
+        },
+        "dtype": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["inputs", "output", "accumulation"],
+          "properties": {
+            "inputs": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+            "output": { "type": "string", "minLength": 1 },
+            "accumulation": { "$ref": "#/$defs/nullableString" }
+          }
+        },
+        "validation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reference", "reference_precision", "absolute_tolerance", "relative_tolerance", "evidence"],
+          "properties": {
+            "reference": { "type": "string", "minLength": 1 },
+            "reference_precision": { "$ref": "#/$defs/nullableString" },
+            "absolute_tolerance": { "$ref": "#/$defs/nullableNumber" },
+            "relative_tolerance": { "$ref": "#/$defs/nullableNumber" },
+            "evidence": { "$ref": "#/$defs/evidenceList" }
+          }
+        },
+        "launch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["threads_per_block", "grid_rule", "elements_per_thread", "evidence"],
+          "properties": {
+            "threads_per_block": { "$ref": "#/$defs/nullableInteger" },
+            "grid_rule": { "$ref": "#/$defs/nullableString" },
+            "elements_per_thread": { "$ref": "#/$defs/nullableInteger" },
+            "evidence": { "$ref": "#/$defs/evidenceList" }
+          }
+        },
+        "codegen": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["declared", "observed", "inferred"],
+          "properties": {
+            "declared": { "$ref": "#/$defs/provenance" },
+            "observed": { "$ref": "#/$defs/provenance" },
+            "inferred": { "$ref": "#/$defs/provenance" }
+          }
+        },
+        "hardware": { "$ref": "#/$defs/provenanceGroup" },
+        "memory": { "$ref": "#/$defs/provenanceGroup" },
+        "parallel": { "$ref": "#/$defs/provenanceGroup" },
+        "sass": { "$ref": "#/$defs/sass" },
+        "measurements": { "$ref": "#/$defs/measurements" }
+      }
+    },
+    "provenanceGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declared", "observed", "inferred"],
+      "properties": {
+        "declared": { "$ref": "#/$defs/provenance" },
+        "observed": { "$ref": "#/$defs/provenance" },
+        "inferred": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "sassFeatures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "has_ffma", "has_hfma2", "has_hmma", "has_mufu_exp2", "has_mufu_rcp",
+        "has_mufu_rsqrt", "has_minmax", "has_shuffle", "has_barrier",
+        "has_atomic", "has_shared_load", "has_shared_store", "has_global_load",
+        "has_global_store", "has_predicate", "has_predicated_store",
+        "has_async_copy", "has_absolute_operand_modifier", "has_negated_register_operand"
+      ],
+      "properties": {
+        "has_ffma": { "$ref": "#/$defs/triState" },
+        "has_hfma2": { "$ref": "#/$defs/triState" },
+        "has_hmma": { "$ref": "#/$defs/triState" },
+        "has_mufu_exp2": { "$ref": "#/$defs/triState" },
+        "has_mufu_rcp": { "$ref": "#/$defs/triState" },
+        "has_mufu_rsqrt": { "$ref": "#/$defs/triState" },
+        "has_minmax": { "$ref": "#/$defs/triState" },
+        "has_shuffle": { "$ref": "#/$defs/triState" },
+        "has_barrier": { "$ref": "#/$defs/triState" },
+        "has_atomic": { "$ref": "#/$defs/triState" },
+        "has_shared_load": { "$ref": "#/$defs/triState" },
+        "has_shared_store": { "$ref": "#/$defs/triState" },
+        "has_global_load": { "$ref": "#/$defs/triState" },
+        "has_global_store": { "$ref": "#/$defs/triState" },
+        "has_predicate": { "$ref": "#/$defs/triState" },
+        "has_predicated_store": { "$ref": "#/$defs/triState" },
+        "has_async_copy": { "$ref": "#/$defs/triState" },
+        "has_absolute_operand_modifier": { "$ref": "#/$defs/triState" },
+        "has_negated_register_operand": { "$ref": "#/$defs/triState" }
+      }
+    },
+    "sassCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instruction_count", "register_count", "global_load_count",
+        "global_store_count", "shared_load_count", "shared_store_count",
+        "ffma_count", "hfma2_count", "hmma_count", "minmax_count",
+        "barrier_count", "atomic_count", "branch_count", "predicate_count"
+      ],
+      "properties": {
+        "instruction_count": { "$ref": "#/$defs/nullableInteger" },
+        "register_count": { "$ref": "#/$defs/nullableInteger" },
+        "global_load_count": { "$ref": "#/$defs/nullableInteger" },
+        "global_store_count": { "$ref": "#/$defs/nullableInteger" },
+        "shared_load_count": { "$ref": "#/$defs/nullableInteger" },
+        "shared_store_count": { "$ref": "#/$defs/nullableInteger" },
+        "ffma_count": { "$ref": "#/$defs/nullableInteger" },
+        "hfma2_count": { "$ref": "#/$defs/nullableInteger" },
+        "hmma_count": { "$ref": "#/$defs/nullableInteger" },
+        "minmax_count": { "$ref": "#/$defs/nullableInteger" },
+        "barrier_count": { "$ref": "#/$defs/nullableInteger" },
+        "atomic_count": { "$ref": "#/$defs/nullableInteger" },
+        "branch_count": { "$ref": "#/$defs/nullableInteger" },
+        "predicate_count": { "$ref": "#/$defs/nullableInteger" }
+      }
+    },
+    "motif": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "offsets", "instructions"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "offsets": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "instructions": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "sass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "architecture", "observed", "inferred"],
+      "properties": {
+        "artifact": { "$ref": "#/$defs/relativePath" },
+        "architecture": { "type": "string", "pattern": "^sm_[0-9]+$" },
+        "observed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["instructions", "features", "counts", "motifs", "evidence"],
+          "properties": {
+            "instructions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+            "features": { "$ref": "#/$defs/sassFeatures" },
+            "counts": { "$ref": "#/$defs/sassCounts" },
+            "motifs": { "type": "array", "items": { "$ref": "#/$defs/motif" } },
+            "evidence": { "$ref": "#/$defs/evidenceList" }
+          }
+        },
+        "inferred": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "measurementArtifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report", "summary", "csv", "detailed_report", "detailed_sass"],
+      "properties": {
+        "report": { "type": ["string", "null"], "pattern": "^operators/" },
+        "summary": { "type": ["string", "null"], "pattern": "^operators/" },
+        "csv": { "type": ["string", "null"], "pattern": "^operators/" },
+        "detailed_report": { "type": ["string", "null"], "pattern": "^operators/" },
+        "detailed_sass": { "type": ["string", "null"], "pattern": "^operators/" }
+      }
+    },
+    "measurements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifacts", "observed", "inferred"],
+      "properties": {
+        "artifacts": { "$ref": "#/$defs/measurementArtifacts" },
+        "observed": { "$ref": "#/$defs/provenance" },
+        "inferred": { "$ref": "#/$defs/provenance" }
+      }
+    }
+  }
+}

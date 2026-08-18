@@ -112,3 +112,77 @@ dependency는 지원하지 않는다.
 
 2026-08-17 로컬 end-to-end 결과와 evidence hash는
 [`operators/fma/VALIDATION.md`](operators/fma/VALIDATION.md)에 기록되어 있다.
+
+## Operator knowledge
+
+재사용 가능한 operator 지식은 기존 CUDA lifecycle과 독립된 파일 계층에 둔다.
+Operator의 수학적/tensor/algebraic/numerical/fusion 의미는
+`operators/<name>/operator.json`의 상위 필드에, 특정 kernel의 dtype/codegen/
+hardware/memory/parallel/SASS/runtime 사실은 `implementations[]`에 둔다.
+따라서 GEMM 같은 operator가 본질적으로 Tensor Core를 쓴다고 기록하지 않고,
+실제로 해당 instruction을 생성한 variant에만 기록한다.
+
+```text
+operators/<name>/operator.json       # OperatorRecord와 variants
+knowledge/schemas/operator.schema.json
+knowledge/index.json                 # 검증 후 생성되는 registry
+tools/knowledge/
+├─ validate_operator_metadata.ps1
+├─ extract_sass_features.ps1
+├─ build_operator_index.ps1
+└─ test_operator_knowledge.ps1
+```
+
+현재 검증된 첫 작업 단위는 `abs`, `neg`, `relu`다. 다음 명령은 metadata의
+schema/semantic/evidence/SASS 일관성을 검사하고 index를 다시 만든다.
+
+```powershell
+.\tools\knowledge\validate_operator_metadata.ps1
+.\tools\knowledge\build_operator_index.ps1
+```
+
+전체 모델, provenance 규칙, 새 operator/variant 등록 절차는
+[`knowledge/README.md`](knowledge/README.md)에 있다. 기존 `build`, `run`,
+`observe`, `measure` 명령은 metadata를 입력으로 요구하지 않으며 그대로 유지된다.
+
+## Python model representation
+
+`python/aicf_labs`는 실행 엔진이 아닌 최소 선언 계층이다. 사용자는 layer로
+`Sequential`을 구성하고, 각 layer가 소유한 semantic operator와 선택 가능한
+implementation evidence를 조회한다.
+
+```python
+from aicf_labs import Sequential
+from aicf_labs.layers import Flatten, Linear, ReLU
+
+model = Sequential(
+    Linear(in_features=128, out_features=64, bias=True),
+    ReLU(),
+    Flatten(),
+)
+
+print(model.summary())
+```
+
+```text
+Linear(bias=True) -> MatMulOperator, AddOperator
+ReLU              -> ReluOperator
+Flatten           -> ReshapeOperator
+```
+
+현재 repository artifact와 정확히 연결한 implementation은 `ReluOperator`의
+`fp32_scalar`뿐이다. `operators/relu/relu.cu`의 `relu_fp32`와
+`operators/relu/artifacts/relu.sass`의 `FMNMX`를 evidence로 사용한다. 기존
+elementwise `add_fp32`는 Linear bias broadcasting을 구현하지 않고, GEMM 실험도
+일반 MatMul 계약과 동일하다고 단정하지 않았으므로 두 operator의 implementation은
+비워 두었다.
+
+외부 dependency는 없다. Repository root에서 다음과 같이 실행한다.
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path .\python).Path
+python -m unittest discover -s tests -v
+```
+
+이 계층은 tensor 연산, forward/autograd, CUDA dispatch, allocation, shape inference,
+optimization/fusion, code generation 또는 serialization을 제공하지 않는다.

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "schema": "knowledge/schemas/operator.schema.json",
+  "operators": [
+    {
+      "name": "abs",
+      "category": "elementwise",
+      "metadata": "operators/abs/operator.json",
+      "implementations": [
+        "fp32_scalar"
+      ]
+    },
+    {
+      "name": "neg",
+      "category": "elementwise",
+      "metadata": "operators/neg/operator.json",
+      "implementations": [
+        "fp32_scalar"
+      ]
+    },
+    {
+      "name": "relu",
+      "category": "elementwise",
+      "metadata": "operators/relu/operator.json",
+      "implementations": [
+        "fp32_scalar"
+      ]
+    }
+  ]
+}
