@@ -186,3 +186,29 @@ python -m unittest discover -s tests -v
 
 이 계층은 tensor 연산, forward/autograd, CUDA dispatch, allocation, shape inference,
 optimization/fusion, code generation 또는 serialization을 제공하지 않는다.
+
+## Plan, lowering, and execution evidence
+
+`python/aicf_labs`에는 frontend 계획과 backend 관측을 분리해 연결하는 immutable
+trace value objects도 있다.
+
+```text
+logical operators -> decision -> plan unit -> implementation binding -> evidence
+```
+
+이 구조는 semantic fusion 계획을 실제 kernel/instruction fusion으로 간주하지
+않으며, 기대 launch 수와 관측 launch 수를 별도로 비교한다. 상세 책임 경계와
+예제는 [`python/EXECUTION_TRACE.md`](python/EXECUTION_TRACE.md)에 있다.
+
+기존 `add.exe`를 직접 실행하고 plan, lowering, process stdout, SASS/profiler
+artifact, evidence, comparison을 단계별로 확인하는 opt-in CUDA 테스트도 제공한다.
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path .\python).Path
+$env:AICF_RUN_CUDA_E2E = "1"
+python .\tests\test_add_cuda_trace_e2e.py -v
+Remove-Item Env:AICF_RUN_CUDA_E2E
+```
+
+기본 test discovery에서는 GPU/executable 의존성을 피하기 위해 이 테스트를
+skip한다.
