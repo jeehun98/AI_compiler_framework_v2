@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+.vite-temp/
+vite.config.*.timestamp-*
+coverage/
+npm-debug.log*
