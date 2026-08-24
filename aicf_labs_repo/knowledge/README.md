@@ -52,10 +52,11 @@ Boolean 계열은 다음 의미를 지킨다.
 
 ## Property classes
 
-Semantic/tensor/algebraic/numerical/fusion Boolean은 검색과 rule prefilter에
-사용한다. 축, shape equation, permutation, dtype, tolerance, launch rule,
-instruction count, runtime metric, fusion 조건은 구조화 필드에 둔다. 모든 값을
-mask로 압축하지 않는다.
+이 상세 knowledge record를 Python/웹의 compact feature mask와 동일시하지 않는다.
+Mask는 실제 rule이 요구하는 소수의 양의 feature만 candidate index로 복사한다.
+축, shape equation, algebraic/numerical 조건, fusion 조건, dtype, tolerance, launch
+rule, instruction count, runtime metric은 구조화 필드에 남기고 rule condition이나
+관측 비교 단계에서 사용한다. 모든 값을 mask로 압축하지 않는다.
 
 SASS feature extraction은 mnemonic 관찰만 보고한다. `HMMA`는 Tensor Core
 instruction evidence지만 operator가 GEMM임을 증명하지 않는다. `MUFU.EX2`도
@@ -119,8 +120,9 @@ validator가 실패한다. 새 측정이 필요할 때만 기존
 
 ## Using metadata for fusion
 
-Fusion 후보 선택은 먼저 semantic/tensor/fusion flag로 거르고 `conditions`를
-검사한다. Elementwise producer/consumer라도 output element mapping이 바뀌거나,
+Fusion 후보 선택은 먼저 compact feature mask로 거르고 상세 metadata와
+`conditions`를 검사한다. Elementwise producer/consumer라도 output element
+mapping이 바뀌거나,
 global synchronization/materialization이 필요하거나, dtype/special-value 정책이
 달라지면 fusion 가능으로 단정하지 않는다. Implementation 선택 단계에서는
 resource 사용, memory behavior, launch mapping, runtime bottleneck을 함께 본다.

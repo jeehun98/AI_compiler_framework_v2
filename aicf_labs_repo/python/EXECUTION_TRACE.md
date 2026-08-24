@@ -3,6 +3,12 @@
 `aicf_labs`의 trace 계층은 frontend의 논리적 계획, backend lowering, 실제 실행
 관측을 연결하되 같은 사실로 합치지 않는다.
 
+이 문서의 `TraceRecord`는 operator invocation capture나 compiler graph가 아니다.
+모델 실행에서 생성되는 계산 기록은 `frontend.py`의 `ExecutionGraph`가 담당하고,
+rewrite/semantic reference verification 이후의 plan·binding·runtime evidence만 이
+backend trace 계층에 연결한다. 두 표현을 합치지 않은 이유는 실제 계산 edge와
+관측 provenance의 수명과 검증 규칙이 다르기 때문이다.
+
 ```text
 logical operator IDs
   -> OptimizationDecision
@@ -27,6 +33,18 @@ target에 사용할 수 없으면 `UNAVAILABLE`로 남길 수 있다.
 Runtime probing은 `ExecutionEvidence`에 profiler, runtime trace, binary/SASS,
 validation, benchmark에서 실제로 관찰한 사실만 기록한다. 관찰하지 않은 launch
 count, latency, validation 결과는 `None`이며 실패를 뜻하지 않는다.
+
+Operator feature mask는 backend trace/evidence 계층에 전달하지 않는다. Mask는
+rewrite 이전의 candidate screening에만 쓰이며, `OptimizationDecision`은 rule 조건과
+semantic verification을 통과한 결정을 기록한다. `compare_plan_to_evidence()`는 그
+결정의 의미를 다시 증명하지 않고 backend 결과만 비교한다.
+
+현재 frontend bridge인 `record_linear_relu_semantic_fusion()`은 legal
+`MatMul -> Add -> ReLU` rewrite와 동등성 비교가 모두 성공한 경우에만
+`SEMANTIC_FUSION` decision을 만든다. 기존 schema의 output reference를 만족시키기
+위해 logical plan unit도 생성하지만 kernel launch 수를 예상하지 않고 binding과
+evidence를 만들지 않는다. 따라서 이 record는 semantic rewrite가 일어났다는 기록일
+뿐 backend fusion의 관측이 아니다.
 
 ## Three different kinds of fusion
 
@@ -116,10 +134,11 @@ trace = TraceRecord(
 result = compare_plan_to_evidence(unit, evidence)
 ```
 
-Semantic fusion을 계획했지만 verified fused backend가 없다면 여러 logical operator
-ID를 한 unit에 두고 UNBOUND binding을 연결한다. Evidence는 만들지 않으며 비교
-결과는 `UNOBSERVED`다. 기존 GEMM/add artifact를 fused implementation이라고
-연결하지 않는다.
+Semantic fusion 뒤 backend selection을 아직 시도하지 않았다면 binding을 생략하고
+expected launch 수도 정의하지 않는다. 이 경우 비교 결과는 `NOT_APPLICABLE`이다.
+Selection을 시도했지만 verified fused backend가 없다면 여러 logical operator ID를
+한 unit에 두고 UNBOUND binding을 연결할 수 있다. Evidence는 만들지 않으며 기존
+GEMM/add artifact를 fused implementation이라고 연결하지 않는다.
 
 ## Direct CUDA end-to-end test
 
@@ -154,7 +173,7 @@ CUDA 실행/validation이 실패하면 skip하지 않고 테스트 실패로 보
 
 ## Deliberately not implemented
 
-- graph pattern matching 또는 자동 fusion 결정
+- backend trace object 내부의 graph pattern matching 또는 자동 fusion 결정
 - CUDA dispatch, compilation, graph execution
 - prebuilt executable의 build 또는 profiler report 재생성
 - implementation selection/autotuning

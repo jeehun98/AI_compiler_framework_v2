@@ -1,71 +1,66 @@
-"""Typed states used by operator and implementation properties."""
+"""Small positive feature masks for cheap operator candidate screening.
+
+A mask is an index, not a proof of transformation legality. Missing flags mean
+only that a feature is not indexed; they do not prove the opposite property.
+"""
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import IntFlag, auto
+from typing import Iterable
 
 
-class State(Enum):
-    """Knowledge state for a semantic or implementation property."""
+class OperatorMask(IntFlag):
+    """Features currently consumed by model or rewrite candidate matching."""
 
-    YES = "yes"
-    NO = "no"
-    NOT_APPLICABLE = "not_applicable"
-    UNKNOWN = "unknown"
+    NONE = 0
+    ELEMENTWISE = auto()
+    REDUCTION = auto()
+    COMMUTATIVE = auto()
+    PURE = auto()
+    SHAPE_PRESERVING = auto()
+    PERMUTATION = auto()
+    BROADCAST = auto()
 
+    def matches(self, required: "OperatorMask") -> bool:
+        """Return whether this mask contains every required screening feature."""
 
-class Observation(Enum):
-    """Inspection status for a concrete piece of implementation evidence."""
-
-    OBSERVED = "observed"
-    NOT_OBSERVED = "not_observed"
-    NOT_INSPECTED = "not_inspected"
-    NOT_APPLICABLE = "not_applicable"
-
-
-class Monotonicity(Enum):
-    """Direction-aware monotonicity that must not be reduced to a Boolean."""
-
-    STRICTLY_INCREASING = "strictly_increasing"
-    NONDECREASING = "nondecreasing"
-    STRICTLY_DECREASING = "strictly_decreasing"
-    NONINCREASING = "nonincreasing"
-    NOT_MONOTONIC = "not_monotonic"
-    CONDITIONAL = "conditional"
-    NOT_APPLICABLE = "not_applicable"
-    UNKNOWN = "unknown"
+        if not isinstance(required, OperatorMask):
+            raise TypeError("required must be an OperatorMask")
+        return (self & required) == required
 
 
 @dataclass(frozen=True)
-class OperatorMask:
-    """Typed operator properties used by later matching and optimization work."""
+class MaskSummary:
+    """Two cheap aggregates for a sequence of operators, not a region IR."""
 
-    elementwise: State = State.UNKNOWN
-    reduction: State = State.UNKNOWN
-    shape_preserving: State = State.UNKNOWN
-    rank_preserving: State = State.UNKNOWN
-    element_independent: State = State.UNKNOWN
+    common: OperatorMask
+    present: OperatorMask
 
-    linear: State = State.UNKNOWN
-    idempotent: State = State.UNKNOWN
-    zero_preserving: State = State.UNKNOWN
-    invertible: State = State.UNKNOWN
-    monotonicity: Monotonicity = Monotonicity.UNKNOWN
+    def matches(
+        self,
+        required: OperatorMask,
+        forbidden: OperatorMask = OperatorMask.NONE,
+    ) -> bool:
+        """Screen a region by shared requirements and any forbidden feature."""
 
-    producer_fusible: State = State.UNKNOWN
-    consumer_fusible: State = State.UNKNOWN
-    epilogue_fusible: State = State.UNKNOWN
-
-    requires_materialization: State = State.UNKNOWN
-    requires_global_sync: State = State.UNKNOWN
+        if not isinstance(required, OperatorMask):
+            raise TypeError("required must be an OperatorMask")
+        if not isinstance(forbidden, OperatorMask):
+            raise TypeError("forbidden must be an OperatorMask")
+        return self.common.matches(required) and not (self.present & forbidden)
 
 
-@dataclass(frozen=True)
-class HardwareMask:
-    """Hardware properties of one implementation, never of an operator itself."""
+def summarize_masks(masks: Iterable[OperatorMask]) -> MaskSummary:
+    """Summarize common (AND) and present (OR) features in one pass."""
 
-    uses_cuda_core: State = State.UNKNOWN
-    uses_tensor_core: State = State.UNKNOWN
-    uses_sfu: State = State.UNKNOWN
-    uses_shared_memory: State = State.UNKNOWN
-    uses_barrier: State = State.UNKNOWN
-    uses_atomic: State = State.UNKNOWN
+    common: OperatorMask | None = None
+    present = OperatorMask.NONE
+    for mask in masks:
+        if not isinstance(mask, OperatorMask):
+            raise TypeError("masks must contain only OperatorMask values")
+        common = mask if common is None else common & mask
+        present |= mask
+    return MaskSummary(common or OperatorMask.NONE, present)
+
+
+__all__ = ("MaskSummary", "OperatorMask", "summarize_masks")

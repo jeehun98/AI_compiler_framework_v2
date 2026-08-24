@@ -1,5 +1,6 @@
 import type { FreedomProfile } from './freedom';
-import type { Graph } from './graph';
+import type { Graph, GraphNode } from './graph';
+import type { OperatorMask } from './operator';
 
 export type RewriteExactness = 'exact' | 'conditionally-exact' | 'approximate';
 
@@ -19,7 +20,9 @@ export interface RewriteRule {
   description: string;
   conditions: string[];
   freedom: FreedomProfile;
-  findMatches(graph: Graph): RewriteMatch[];
+  requiredMask: OperatorMask;
+  /** Detailed structural/value checks; only passing candidates become matches. */
+  findMatches(graph: Graph, candidates: readonly GraphNode[]): RewriteMatch[];
   apply(graph: Graph, match: RewriteMatch): Graph;
 }
 

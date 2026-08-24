@@ -1,5 +1,5 @@
 import type { FreedomProfile } from '../domain/freedom';
-import type { Operator, OperatorId } from '../domain/operator';
+import { OperatorMask, type Operator, type OperatorId } from '../domain/operator';
 
 const implementationUnbound = {
   status: 'unknown',
@@ -21,14 +21,14 @@ const sourceStructure = { status: 'fixed', summary: '입력이 없는 그래프 
 
 export const OPERATORS: readonly Operator[] = [
   {
-    id: 'input', name: 'Input', symbol: 'x', category: 'source', arity: 0, inputPorts: [],
+    id: 'input', name: 'Input', symbol: 'x', category: 'source', arity: 0, mask: OperatorMask.NONE, inputPorts: [],
     meaning: '계산 그래프에 외부 텐서를 도입합니다.', latexTemplate: 'x',
     shapeRule: { notation: '사용자가 지정한 shape', constraints: ['shape는 의미 주석이며 MVP에서 실행하지 않습니다.'] },
     algebraicProperties: ['그래프의 자유 변수'], numericalNotes: ['dtype과 값 범위는 외부 입력 계약에 따릅니다.'], applicableRewriteRuleIds: [],
     freedom: freedom(fixedAlgebra, valueDependent, sourceStructure), accent: '#67e8f9',
   },
   {
-    id: 'constant', name: 'Constant', symbol: 'c', category: 'source', arity: 0, inputPorts: [],
+    id: 'constant', name: 'Constant', symbol: 'c', category: 'source', arity: 0, mask: OperatorMask.NONE, inputPorts: [],
     meaning: '그래프 내부의 스칼라 상수입니다.', latexTemplate: 'c',
     shapeRule: { notation: 'scalar', constraints: ['MVP Constant는 유한한 JavaScript number입니다.'] },
     algebraicProperties: ['항등원·소거원 패턴에 참여'], numericalNotes: ['target dtype으로 변환될 때 반올림될 수 있습니다.'], applicableRewriteRuleIds: ['constant-fold'],
@@ -36,6 +36,7 @@ export const OPERATORS: readonly Operator[] = [
   },
   {
     id: 'add', name: 'Add', symbol: '+', category: 'elementwise', arity: 2,
+    mask: OperatorMask.ELEMENTWISE | OperatorMask.COMMUTATIVE | OperatorMask.PURE | OperatorMask.BROADCAST,
     inputPorts: [{ id: 'in-0', label: 'left', required: true }, { id: 'in-1', label: 'right', required: true }],
     meaning: '두 값을 원소별로 더합니다.', latexTemplate: 'a + b',
     shapeRule: { notation: 'broadcast(A, B)', constraints: ['두 입력 shape는 broadcast 가능해야 합니다.'] },
@@ -45,6 +46,7 @@ export const OPERATORS: readonly Operator[] = [
   },
   {
     id: 'mul', name: 'Mul', symbol: '×', category: 'elementwise', arity: 2,
+    mask: OperatorMask.ELEMENTWISE | OperatorMask.COMMUTATIVE | OperatorMask.PURE | OperatorMask.BROADCAST,
     inputPorts: [{ id: 'in-0', label: 'left', required: true }, { id: 'in-1', label: 'right', required: true }],
     meaning: '두 값을 원소별로 곱합니다.', latexTemplate: 'a \\cdot b',
     shapeRule: { notation: 'broadcast(A, B)', constraints: ['두 입력 shape는 broadcast 가능해야 합니다.'] },
@@ -53,7 +55,7 @@ export const OPERATORS: readonly Operator[] = [
     freedom: freedom({ status: 'available', summary: '입력 교환, 1 제거, 0 소거가 가능합니다.', constraints: [] }, valueDependent, { status: 'conditional', summary: '두 고정 입력 포트를 유지해야 합니다.', constraints: ['broadcast 계약을 유지해야 합니다.'] }), accent: '#c084fc',
   },
   {
-    id: 'matmul', name: 'MatMul', symbol: '@', category: 'matrix', arity: 2,
+    id: 'matmul', name: 'MatMul', symbol: '@', category: 'matrix', arity: 2, mask: OperatorMask.PURE,
     inputPorts: [{ id: 'in-0', label: 'left', required: true }, { id: 'in-1', label: 'right', required: true }],
     meaning: '두 행렬의 축약 곱을 계산합니다.', latexTemplate: 'AB',
     shapeRule: { notation: '[m, k] @ [k, n] → [m, n]', constraints: ['왼쪽 마지막 축과 오른쪽 끝에서 두 번째 축이 같아야 합니다.'] },
@@ -62,6 +64,7 @@ export const OPERATORS: readonly Operator[] = [
   },
   {
     id: 'relu', name: 'ReLU', symbol: '↗', category: 'elementwise', arity: 1,
+    mask: OperatorMask.ELEMENTWISE | OperatorMask.PURE | OperatorMask.SHAPE_PRESERVING,
     inputPorts: [{ id: 'in-0', label: 'input', required: true }], meaning: '각 원소를 max(x, 0)으로 변환합니다.', latexTemplate: '\\operatorname{ReLU}(x)',
     shapeRule: { notation: 'shape(Y) = shape(X)', constraints: ['rank와 shape를 보존합니다.'] },
     algebraicProperties: ['멱등: ReLU(ReLU(x)) = ReLU(x)'], numericalNotes: ['NaN 처리 방식은 구체 max 구현에 따라 달라질 수 있습니다.'], applicableRewriteRuleIds: ['constant-fold'],
@@ -69,6 +72,7 @@ export const OPERATORS: readonly Operator[] = [
   },
   {
     id: 'transpose', name: 'Transpose', symbol: 'T', category: 'layout', arity: 1,
+    mask: OperatorMask.PURE | OperatorMask.PERMUTATION,
     inputPorts: [{ id: 'in-0', label: 'input', required: true }], meaning: '마지막 두 축을 서로 교환합니다.', latexTemplate: 'x^{\\mathsf T}',
     shapeRule: { notation: '[…, m, n] → […, n, m]', constraints: ['rank가 2 이상이어야 합니다.'] },
     algebraicProperties: ['대합: T(T(x)) = x'], numericalNotes: ['값을 재계산하지 않지만 구현에서 layout materialization이 필요할 수 있습니다.'], applicableRewriteRuleIds: ['double-transpose'],
@@ -76,6 +80,7 @@ export const OPERATORS: readonly Operator[] = [
   },
   {
     id: 'reduceSum', name: 'ReduceSum', symbol: 'Σ', category: 'reduction', arity: 1,
+    mask: OperatorMask.REDUCTION | OperatorMask.PURE,
     inputPorts: [{ id: 'in-0', label: 'input', required: true }], meaning: '선택한 축의 원소를 합산합니다.', latexTemplate: '\\sum_i x_i',
     shapeRule: { notation: '지정 축 제거 또는 크기 1 유지', constraints: ['axis는 입력 rank 범위 안이어야 합니다.'] },
     algebraicProperties: ['선형 연산'], numericalNotes: ['합산 순서에 따라 부동소수점 결과가 달라질 수 있습니다.'], applicableRewriteRuleIds: [],

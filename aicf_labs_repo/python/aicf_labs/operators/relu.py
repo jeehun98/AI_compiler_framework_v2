@@ -2,14 +2,8 @@
 
 from dataclasses import dataclass
 
-from ..implementation import Implementation, SassEvidence
-from ..masks import (
-    HardwareMask,
-    Monotonicity,
-    Observation,
-    OperatorMask,
-    State,
-)
+from ..implementation import Implementation, Observation, SassEvidence
+from ..masks import OperatorMask
 from ..operator import Operator
 
 
@@ -19,14 +13,6 @@ _RELU_FP32_SCALAR = Implementation(
     kernel_name="relu_fp32",
     input_dtype="fp32",
     output_dtype="fp32",
-    hardware=HardwareMask(
-        uses_cuda_core=State.YES,
-        uses_tensor_core=State.NO,
-        uses_sfu=State.NO,
-        uses_shared_memory=State.NO,
-        uses_barrier=State.NO,
-        uses_atomic=State.NO,
-    ),
     sass_evidence=(
         SassEvidence(
             file="operators/relu/artifacts/relu.sass",
@@ -81,22 +67,10 @@ class ReluOperator(Operator):
             expression="y = max(x, 0)",
             category="elementwise",
             arity=1,
-            mask=OperatorMask(
-                elementwise=State.YES,
-                reduction=State.NO,
-                shape_preserving=State.YES,
-                rank_preserving=State.YES,
-                element_independent=State.YES,
-                linear=State.NO,
-                idempotent=State.YES,
-                zero_preserving=State.YES,
-                invertible=State.NO,
-                monotonicity=Monotonicity.NONDECREASING,
-                producer_fusible=State.YES,
-                consumer_fusible=State.YES,
-                epilogue_fusible=State.YES,
-                requires_materialization=State.NO,
-                requires_global_sync=State.NO,
+            mask=(
+                OperatorMask.ELEMENTWISE
+                | OperatorMask.PURE
+                | OperatorMask.SHAPE_PRESERVING
             ),
             implementations=(_RELU_FP32_SCALAR,),
         )

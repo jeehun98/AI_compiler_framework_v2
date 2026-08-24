@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Graph } from '../domain/graph';
+import { OperatorMask } from '../domain/operator';
 import { edge, graph, node } from '../test/graphFixtures';
 import { graphToLatex } from './graphToLatex';
 import { cleanupUnusedNodes } from './graphCleanup';
-import { findRewriteCandidates } from './rewriteEngine';
+import { findRewriteCandidates, nodesMatchingMask } from './rewriteEngine';
 import { REWRITE_RULES } from './rewriteRules';
 import { validateGraph } from './validateGraph';
 
@@ -143,6 +144,38 @@ describe('rewrite matching and application', () => {
     expect(ids).not.toContain('double-transpose');
   });
 
+  it('does not treat a mask match as rule legality', () => {
+    const value = graph(
+      [node('x', 'input', { symbol: 'x', shape: [] }), node('two', 'constant', { value: 2 }), node('root', 'mul')],
+      [edge('x', 'root', 'in-0'), edge('two', 'root', 'in-1')],
+    );
+    const required = OperatorMask.ELEMENTWISE | OperatorMask.PURE;
+
+    expect(nodesMatchingMask(value, required).map(({ id }) => id)).toEqual(['root']);
+    expect(findRewriteCandidates(value).map(({ ruleId }) => ruleId)).not.toContain('mul-one');
+  });
+
+  it('does not apply a rewrite when its rule-specific matcher rejects candidates', () => {
+    const value = graph(
+      [node('x', 'input', { symbol: 'x', shape: [] }), node('zero', 'constant', { value: 0 }), node('root', 'add')],
+      [edge('x', 'root', 'in-0'), edge('zero', 'root', 'in-1')],
+    );
+    const base = REWRITE_RULES[0];
+    let applyCalled = false;
+    const rejected = {
+      ...base,
+      id: 'condition-rejected',
+      findMatches: () => [],
+      apply(graphValue: Graph, match: Parameters<typeof base.apply>[1]) {
+        applyCalled = true;
+        return base.apply(graphValue, match);
+      },
+    };
+
+    expect(findRewriteCandidates(value, [rejected])).toEqual([]);
+    expect(applyCalled).toBe(false);
+  });
+
   it('rewires every consumer and preserves shared subgraphs', () => {
     const original = graph(
       [node('x', 'input', { symbol: 'x', shape: [] }), node('zero', 'constant', { value: 0 }), node('add', 'add'), node('left', 'relu'), node('right', 'transpose')],
@@ -178,6 +211,7 @@ describe('rewrite metadata', () => {
   it('classifies every rule and keeps four independent freedom axes', () => {
     for (const rule of REWRITE_RULES) {
       expect(['exact', 'conditionally-exact', 'approximate']).toContain(rule.exactness);
+      expect(rule.requiredMask).not.toBe(OperatorMask.NONE);
       expect(Object.keys(rule.freedom).sort()).toEqual(['algebraic', 'implementation', 'numerical', 'structural']);
     }
     expect(REWRITE_RULES.find(({ id }) => id === 'double-transpose')?.exactness).toBe('exact');

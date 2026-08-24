@@ -11,7 +11,7 @@ from .operator import Operator
 
 @dataclass(frozen=True, init=False, repr=False, slots=True)
 class Sequential(Model):
-    """Store layers in declaration order and expose structural inspection."""
+    """Store layers in order and execute the currently callable layer subset."""
 
     _layers: tuple[Layer, ...] = field(repr=False)
 
@@ -47,6 +47,18 @@ class Sequential(Model):
             for layer in self._layers
             for operator in layer.operators
         )
+
+    def forward(self, value: object) -> object:
+        """Pass one value through each executable layer in declaration order."""
+
+        result = value
+        for layer in self._layers:
+            if not callable(layer):
+                raise NotImplementedError(
+                    f"{type(layer).__name__} execution is not implemented"
+                )
+            result = layer(result)
+        return result
 
     def summary(self) -> str:
         if not self._layers:

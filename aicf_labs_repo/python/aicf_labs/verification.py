@@ -1,8 +1,17 @@
-"""Small, explicit comparisons between planned and observed execution facts."""
+"""Verify graph meaning or compare backend plans with observed evidence.
+
+Neither verification path decides rewrite legality. Rule-specific conditions do.
+"""
 
 from dataclasses import dataclass
 from enum import Enum
 
+from .frontend import (
+    ExecutionGraph,
+    ReferenceValue,
+    execute_graph,
+    reference_values_close,
+)
 from .tracing import ExecutionEvidence, ExecutionPlan, PlannedExecutionUnit
 
 
@@ -32,6 +41,45 @@ class PlanEvidenceComparison:
     plan_id: str
     evidence_id: str | None
     kernel_launches: VerificationCheck
+
+
+@dataclass(frozen=True)
+class GraphExecutionComparison:
+    """Reference outputs and the resulting semantic equivalence decision."""
+
+    equivalent: bool
+    original_output: ReferenceValue | tuple[ReferenceValue, ...]
+    rewritten_output: ReferenceValue | tuple[ReferenceValue, ...]
+    rel_tol: float
+    abs_tol: float
+
+
+def compare_graph_executions(
+    original: ExecutionGraph,
+    rewritten: ExecutionGraph,
+    inputs: tuple[ReferenceValue, ...],
+    *,
+    rel_tol: float = 0.0,
+    abs_tol: float = 0.0,
+) -> GraphExecutionComparison:
+    """Reference-execute two graphs and compare their outputs explicitly."""
+
+    if rel_tol < 0 or abs_tol < 0:
+        raise ValueError("comparison tolerances must be non-negative")
+    original_output = execute_graph(original, inputs)
+    rewritten_output = execute_graph(rewritten, inputs)
+    return GraphExecutionComparison(
+        equivalent=reference_values_close(
+            original_output,
+            rewritten_output,
+            rel_tol=rel_tol,
+            abs_tol=abs_tol,
+        ),
+        original_output=original_output,
+        rewritten_output=rewritten_output,
+        rel_tol=rel_tol,
+        abs_tol=abs_tol,
+    )
 
 
 def _expected_kernel_launches(
@@ -111,8 +159,10 @@ def compare_plan_to_evidence(
 
 
 __all__ = (
+    "GraphExecutionComparison",
     "PlanEvidenceComparison",
     "VerificationCheck",
     "VerificationStatus",
+    "compare_graph_executions",
     "compare_plan_to_evidence",
 )

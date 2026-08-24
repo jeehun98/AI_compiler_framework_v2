@@ -1,8 +1,16 @@
 """Concrete implementation descriptions separated from operator semantics."""
 
 from dataclasses import dataclass
+from enum import Enum
 
-from .masks import HardwareMask, Observation
+
+class Observation(Enum):
+    """Inspection status for concrete implementation evidence."""
+
+    OBSERVED = "observed"
+    NOT_OBSERVED = "not_observed"
+    NOT_INSPECTED = "not_inspected"
+    NOT_APPLICABLE = "not_applicable"
 
 
 @dataclass(frozen=True)
@@ -34,7 +42,6 @@ class Implementation:
     kernel_name: str
     input_dtype: str
     output_dtype: str
-    hardware: HardwareMask
     sass_evidence: tuple[SassEvidence, ...] = ()
 
     def __post_init__(self) -> None:
@@ -48,11 +55,12 @@ class Implementation:
         for field_name, value in text_fields.items():
             if not value:
                 raise ValueError(f"Implementation.{field_name} must not be empty")
-        if not isinstance(self.hardware, HardwareMask):
-            raise TypeError("Implementation.hardware must be a HardwareMask")
         if not isinstance(self.sass_evidence, tuple):
             raise TypeError("Implementation.sass_evidence must be a tuple")
         if not all(isinstance(item, SassEvidence) for item in self.sass_evidence):
             raise TypeError(
                 "Implementation.sass_evidence must contain only SassEvidence"
             )
+
+
+__all__ = ("Implementation", "Observation", "SassEvidence")

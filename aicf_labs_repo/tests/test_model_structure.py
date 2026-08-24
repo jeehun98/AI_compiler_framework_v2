@@ -5,10 +5,9 @@ from pathlib import Path
 import unittest
 
 from aicf_labs import (
-    Monotonicity,
     Observation,
+    OperatorMask,
     Sequential,
-    State,
 )
 from aicf_labs.layers import Flatten, Linear, ReLU
 from aicf_labs.operators import ReluOperator
@@ -53,16 +52,14 @@ class ModelStructureTests(unittest.TestCase):
 
     def test_relu_mask(self) -> None:
         relu = self.model[1].operators[0]
-        self.assertIs(relu.mask.elementwise, State.YES)
-        self.assertIs(relu.mask.shape_preserving, State.YES)
-        self.assertIs(relu.mask.idempotent, State.YES)
-        self.assertIs(relu.mask.zero_preserving, State.YES)
-        self.assertIs(relu.mask.invertible, State.NO)
-        self.assertIs(
-            relu.mask.monotonicity,
-            Monotonicity.NONDECREASING,
+        self.assertTrue(
+            relu.matches(
+                OperatorMask.ELEMENTWISE
+                | OperatorMask.PURE
+                | OperatorMask.SHAPE_PRESERVING
+            )
         )
-        self.assertIs(relu.mask.epilogue_fusible, State.YES)
+        self.assertFalse(relu.matches(OperatorMask.COMMUTATIVE))
 
     def test_only_relu_has_a_connected_implementation(self) -> None:
         matmul, add, relu, reshape = self.model.operators()
@@ -134,10 +131,12 @@ class ModelStructureTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             relu.name = "changed"  # type: ignore[misc]
         with self.assertRaises(FrozenInstanceError):
-            relu.mask.elementwise = State.NO  # type: ignore[misc]
+            relu.mask = OperatorMask.NONE  # type: ignore[misc]
 
-    def test_representation_has_no_execution_api(self) -> None:
-        self.assertFalse(hasattr(self.model, "forward"))
+    def test_declaration_has_only_the_minimal_execution_api(self) -> None:
+        self.assertTrue(callable(self.model.forward))
+        with self.assertRaisesRegex(RuntimeError, "explicit weight"):
+            self.model.forward(object())
         self.assertFalse(hasattr(self.model, "compile"))
         self.assertFalse(hasattr(self.model, "optimize"))
 

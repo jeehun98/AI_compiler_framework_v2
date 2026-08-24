@@ -1,0 +1,82 @@
+{
+  "id": "graph.toy_model",
+  "name": "ToyModel",
+  "nodes": [
+    {
+      "id": "input.0",
+      "operatorId": "input",
+      "parameters": { "symbol": "x", "shape": [2, 2] }
+    },
+    {
+      "id": "input.1",
+      "operatorId": "input",
+      "parameters": { "symbol": "w", "shape": [2, 2] }
+    },
+    { "id": "matmul.0", "operatorId": "matmul", "parameters": {} },
+    {
+      "id": "constant.0",
+      "operatorId": "constant",
+      "parameters": { "value": 0 }
+    },
+    { "id": "add.0", "operatorId": "add", "parameters": {} },
+    { "id": "relu.0", "operatorId": "relu", "parameters": {} },
+    {
+      "id": "constant.1",
+      "operatorId": "constant",
+      "parameters": { "value": 1 }
+    },
+    { "id": "mul.0", "operatorId": "mul", "parameters": {} }
+  ],
+  "edges": [
+    {
+      "id": "edge.0",
+      "sourceNodeId": "input.0",
+      "sourcePort": "out",
+      "targetNodeId": "matmul.0",
+      "targetPort": "in-0"
+    },
+    {
+      "id": "edge.1",
+      "sourceNodeId": "input.1",
+      "sourcePort": "out",
+      "targetNodeId": "matmul.0",
+      "targetPort": "in-1"
+    },
+    {
+      "id": "edge.2",
+      "sourceNodeId": "matmul.0",
+      "sourcePort": "out",
+      "targetNodeId": "add.0",
+      "targetPort": "in-0"
+    },
+    {
+      "id": "edge.3",
+      "sourceNodeId": "constant.0",
+      "sourcePort": "out",
+      "targetNodeId": "add.0",
+      "targetPort": "in-1"
+    },
+    {
+      "id": "edge.4",
+      "sourceNodeId": "add.0",
+      "sourcePort": "out",
+      "targetNodeId": "relu.0",
+      "targetPort": "in-0"
+    },
+    {
+      "id": "edge.5",
+      "sourceNodeId": "relu.0",
+      "sourcePort": "out",
+      "targetNodeId": "mul.0",
+      "targetPort": "in-0"
+    },
+    {
+      "id": "edge.6",
+      "sourceNodeId": "constant.1",
+      "sourcePort": "out",
+      "targetNodeId": "mul.0",
+      "targetPort": "in-1"
+    }
+  ],
+  "outputs": ["mul.0"]
+}

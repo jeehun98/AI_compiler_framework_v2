@@ -8,7 +8,7 @@ from .masks import OperatorMask
 
 @dataclass(frozen=True)
 class Operator:
-    """An immutable semantic computation unit used inside a layer."""
+    """An immutable computation unit with cheap positive feature metadata."""
 
     name: str
     expression: str
@@ -39,3 +39,16 @@ class Operator:
             raise TypeError(
                 "Operator.implementations must contain only Implementation objects"
             )
+
+    def matches(self, required: OperatorMask) -> bool:
+        """Cheaply screen this operator; rule conditions still decide legality."""
+
+        return self.mask.matches(required)
+
+    def __call__(self, *inputs: object) -> object:
+        """Eagerly evaluate, or record this invocation in an active model trace."""
+
+        # Local import keeps the semantic metadata type independent of tracing.
+        from .frontend import invoke_operator
+
+        return invoke_operator(self, inputs)

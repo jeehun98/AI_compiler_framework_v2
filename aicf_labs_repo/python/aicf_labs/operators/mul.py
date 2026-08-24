@@ -1,4 +1,4 @@
-"""Elementwise addition operator semantics."""
+"""Elementwise multiplication operator semantics."""
 
 from dataclasses import dataclass
 
@@ -7,13 +7,13 @@ from ..operator import Operator
 
 
 @dataclass(frozen=True, init=False)
-class AddOperator(Operator):
-    """Declarative addition, including broadcast forms such as bias add."""
+class MulOperator(Operator):
+    """Declarative elementwise multiplication with scalar broadcasting."""
 
     def __init__(self) -> None:
         super().__init__(
-            name="add",
-            expression="y = x + b",
+            name="mul",
+            expression="y = x * b",
             category="elementwise",
             arity=2,
             mask=(

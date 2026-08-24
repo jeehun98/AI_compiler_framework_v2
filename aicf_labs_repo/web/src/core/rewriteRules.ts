@@ -1,5 +1,6 @@
 import type { FreedomAxis, FreedomProfile } from '../domain/freedom';
 import type { Graph, GraphEdge, GraphNode, InputPortId } from '../domain/graph';
+import { OperatorMask } from '../domain/operator';
 import type { RewriteMatch, RewriteRule } from '../domain/rewrite';
 
 const unboundImplementation: FreedomAxis = {
@@ -82,6 +83,7 @@ function identityRule(
     name,
     exactness: 'conditionally-exact',
     description: `${operatorId === 'add' ? '덧셈' : '곱셈'} 항등원을 제거합니다.`,
+    requiredMask: OperatorMask.ELEMENTWISE | OperatorMask.PURE,
     conditions: operatorId === 'add'
       ? ['signed zero가 관찰 가능한 의미가 아니어야 합니다.']
       : ['signaling NaN과 NaN payload 변화가 관찰 가능한 의미가 아니어야 합니다.'],
@@ -90,9 +92,9 @@ function identityRule(
       conditionalNumerical,
       { status: 'available', summary: '두 노드를 우회해 소비자를 원래 값에 직접 연결합니다.', constraints: ['공유된 피연산자는 보존합니다.'] },
     ),
-    findMatches(graph) {
+    findMatches(graph, candidates) {
       const matches: RewriteMatch[] = [];
-      for (const root of graph.nodes.filter((node) => node.operatorId === operatorId)) {
+      for (const root of candidates.filter((node) => node.operatorId === operatorId)) {
         const { left, right } = inputBindings(graph, root.id);
         const leftIdentity = constantValue(left) === identity;
         const rightIdentity = constantValue(right) === identity;
@@ -118,15 +120,16 @@ const mulZeroRule: RewriteRule = {
   name: 'x × 0 → 0',
   exactness: 'conditionally-exact',
   description: '곱셈의 소거원 0으로 전체 결과를 대체합니다.',
+  requiredMask: OperatorMask.ELEMENTWISE | OperatorMask.PURE,
   conditions: ['0이 아닌 피연산자가 유한해야 합니다.', 'NaN, Inf, signed zero 정책이 변형을 허용해야 합니다.'],
   freedom: ruleFreedom(
     { status: 'available', summary: '0 소거원으로 곱셈 전체를 대체합니다.', constraints: [] },
     conditionalNumerical,
     { status: 'available', summary: '사용되지 않는 반대쪽 피연산자 가지를 제거할 수 있습니다.', constraints: ['다른 소비자가 있는 공유 가지는 보존합니다.'] },
   ),
-  findMatches(graph) {
+  findMatches(graph, candidates) {
     const matches: RewriteMatch[] = [];
-    for (const root of graph.nodes.filter(({ operatorId }) => operatorId === 'mul')) {
+    for (const root of candidates.filter(({ operatorId }) => operatorId === 'mul')) {
       const { left, right } = inputBindings(graph, root.id);
       const zero = constantValue(left) === 0 ? left : constantValue(right) === 0 ? right : undefined;
       const discarded = zero?.id === left?.id ? right : left;
@@ -155,15 +158,16 @@ const constantFoldRule: RewriteRule = {
   name: 'Constant folding',
   exactness: 'conditionally-exact',
   description: '스칼라 Constant만을 입력으로 받는 Add, Mul, ReLU를 미리 계산합니다.',
+  requiredMask: OperatorMask.ELEMENTWISE | OperatorMask.PURE,
   conditions: ['JavaScript number 평가가 target dtype의 반올림·특수값 의미와 같아야 합니다.'],
   freedom: ruleFreedom(
     { status: 'available', summary: '알려진 상수 식을 하나의 상수로 축약합니다.', constraints: [] },
     conditionalNumerical,
     { status: 'available', summary: '연산 노드와 전용 상수 입력을 단일 노드로 합칩니다.', constraints: ['공유 Constant는 제거하지 않습니다.'] },
   ),
-  findMatches(graph) {
+  findMatches(graph, candidates) {
     const matches: RewriteMatch[] = [];
-    for (const root of graph.nodes.filter(({ operatorId }) => ['add', 'mul', 'relu'].includes(operatorId))) {
+    for (const root of candidates.filter(({ operatorId }) => ['add', 'mul', 'relu'].includes(operatorId))) {
       const arity = root.operatorId === 'relu' ? 1 : 2;
       const inputNodes = Array.from({ length: arity }, (_, index) => nodeById(graph, incomingEdge(graph, root.id, `in-${index}`)?.sourceNodeId));
       const values = inputNodes.map(constantValue);
@@ -189,14 +193,15 @@ function commutativeRule(operatorId: 'add' | 'mul'): RewriteRule {
     name: `${operatorId === 'add' ? 'Add' : 'Mul'} 입력 교환`,
     exactness: 'conditionally-exact',
     description: '교환법칙을 사용해 두 입력 포트를 바꿉니다.',
+    requiredMask: OperatorMask.COMMUTATIVE | OperatorMask.PURE,
     conditions: ['NaN payload와 operand evaluation order가 관찰 가능한 의미가 아니어야 합니다.'],
     freedom: ruleFreedom(
       { status: 'available', summary: '교환법칙에 따라 입력 순서를 바꿉니다.', constraints: [] },
       conditionalNumerical,
       { status: 'available', summary: '노드 수를 바꾸지 않고 두 입력 엣지의 포트만 교환합니다.', constraints: [] },
     ),
-    findMatches(graph) {
-      return graph.nodes
+    findMatches(graph, candidates) {
+      return candidates
         .filter((node) => node.operatorId === operatorId)
         .flatMap((root): RewriteMatch[] => {
           const left = incomingEdge(graph, root.id, 'in-0');
@@ -223,15 +228,16 @@ const doubleTransposeRule: RewriteRule = {
   name: 'Transpose(Transpose(x)) → x',
   exactness: 'exact',
   description: '동일한 마지막 두 축을 두 번 교환하는 연속 Transpose를 제거합니다.',
+  requiredMask: OperatorMask.PERMUTATION | OperatorMask.PURE,
   conditions: ['두 Transpose가 모두 마지막 두 축 교환으로 정의되어야 합니다.'],
   freedom: ruleFreedom(
     { status: 'available', summary: 'Transpose의 대합 성질을 적용합니다.', constraints: [] },
     exactNumerical,
     { status: 'available', summary: '두 layout 노드를 우회합니다.', constraints: ['공유 inner Transpose는 보존합니다.'] },
   ),
-  findMatches(graph) {
+  findMatches(graph, candidates) {
     const matches: RewriteMatch[] = [];
-    for (const outer of graph.nodes.filter(({ operatorId }) => operatorId === 'transpose')) {
+    for (const outer of candidates.filter(({ operatorId }) => operatorId === 'transpose')) {
       const inner = nodeById(graph, incomingEdge(graph, outer.id, 'in-0')?.sourceNodeId);
       const value = inner?.operatorId === 'transpose' ? nodeById(graph, incomingEdge(graph, inner.id, 'in-0')?.sourceNodeId) : undefined;
       if (inner && value) {
