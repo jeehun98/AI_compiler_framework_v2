@@ -35,7 +35,7 @@ class SassEvidence:
 
 @dataclass(frozen=True)
 class Implementation:
-    """A particular CUDA implementation that may realize an operator."""
+    """A CUDA implementation whose name is local to its owning operator."""
 
     name: str
     source_file: str

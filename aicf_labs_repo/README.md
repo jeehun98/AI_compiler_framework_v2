@@ -412,6 +412,17 @@ logical operators -> decision -> plan unit -> implementation binding -> evidence
 이 구조는 semantic fusion 계획을 실제 kernel/instruction fusion으로 간주하지
 않으며, 기대 launch 수와 관측 launch 수를 별도로 비교한다. 상세 책임 경계와
 예제는 [`python/EXECUTION_TRACE.md`](python/EXECUTION_TRACE.md)에 있다.
+검증된 `LinearReLU` semantic rewrite는 backend 선택 전 상태를 명시적인
+`ImplementationBinding(status=UNBOUND, backend=None)`으로 기록하며, 이때 kernel
+launch 기대값과 runtime evidence는 계속 비워 둔다.
+기존 `gemm`, `add`, `relu` CUDA source/build/probe 자산은 각각 독립 구현의
+산출물이며 fused `LinearReLU` 구현으로 취급하지 않는다. 현재 직접 대응하는 fused
+kernel과 metadata가 없으므로 semantic plan은 `UNBOUND`를 유지한다.
+
+등록된 concrete implementation의 선택은 `select_implementation()`으로 명시적으로
+수행한다. 첫 production 경로는 `ReluOperator.fp32_scalar`를 사용하며, 선택 결과는
+`ImplementationBinding(status=SELECTED)`과 `selection_mode=explicit`만 기록한다.
+이 단계는 kernel launch 기대값이나 execution evidence를 만들지 않는다.
 
 기존 `add.exe`를 직접 실행하고 plan, lowering, process stdout, SASS/profiler
 artifact, evidence, comparison을 단계별로 확인하는 opt-in CUDA 테스트도 제공한다.

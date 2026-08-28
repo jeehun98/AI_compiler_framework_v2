@@ -278,11 +278,11 @@ class ExecutionPlan:
 
 @dataclass(frozen=True)
 class ImplementationBinding:
-    """A lowering record that binds one planned unit to an implementation ref."""
+    """The backend implementation-resolution state for one planned unit."""
 
     id: str
     unit_id: str
-    backend: str
+    backend: str | None
     status: BindingStatus
     target: str | None = None
     implementation_ref: str | None = None
@@ -292,9 +292,14 @@ class ImplementationBinding:
     def __post_init__(self) -> None:
         _validate_stable_id(self.id, "ImplementationBinding.id")
         _validate_stable_id(self.unit_id, "ImplementationBinding.unit_id")
-        _validate_nonempty_text(self.backend, "ImplementationBinding.backend")
         if not isinstance(self.status, BindingStatus):
             raise TypeError("ImplementationBinding.status must be a BindingStatus")
+        if self.backend is not None:
+            _validate_nonempty_text(self.backend, "ImplementationBinding.backend")
+        elif self.status is not BindingStatus.UNBOUND:
+            raise ValueError(
+                "A non-UNBOUND ImplementationBinding requires a backend"
+            )
         if self.target is not None:
             _validate_nonempty_text(self.target, "ImplementationBinding.target")
         if self.implementation_ref is not None:
@@ -321,9 +326,13 @@ class ImplementationBinding:
                 raise ValueError(
                     "A selected ImplementationBinding requires selection_reason"
                 )
-        elif self.status is BindingStatus.UNBOUND and self.implementation_ref is not None:
+        elif (
+            self.status in (BindingStatus.UNBOUND, BindingStatus.UNAVAILABLE)
+            and self.implementation_ref is not None
+        ):
             raise ValueError(
-                "An unbound ImplementationBinding cannot name an implementation"
+                f"A {self.status.value} ImplementationBinding cannot name an "
+                "implementation"
             )
 
 

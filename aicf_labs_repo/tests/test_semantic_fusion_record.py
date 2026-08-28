@@ -1,9 +1,11 @@
 """Connect a verified logical rewrite to existing optimization trace records."""
 
 from dataclasses import replace
+from pathlib import Path
 import unittest
 
 from aicf_labs import (
+    BindingStatus,
     DecisionKind,
     Sequential,
     VerificationStatus,
@@ -13,9 +15,11 @@ from aicf_labs import (
     find_linear_relu_candidates,
     record_linear_relu_semantic_fusion,
     rewrite_linear_relu,
+    select_implementation,
     trace_model,
 )
 from aicf_labs.layers import Linear, ReLU
+from aicf_labs.operators import LinearReluOperator, ReluOperator
 
 
 X = [[1, 2], [3, 4]]
@@ -75,7 +79,9 @@ class SemanticFusionRecordTests(unittest.TestCase):
             },
         )
 
-    def test_plan_unit_carries_values_without_claiming_backend_execution(self) -> None:
+    def test_plan_unit_has_explicit_unbound_backend_state_without_runtime_claims(
+        self,
+    ) -> None:
         original, rewritten, legality, verification = _verified_rewrite()
         trace = record_linear_relu_semantic_fusion(
             original,
@@ -94,13 +100,38 @@ class SemanticFusionRecordTests(unittest.TestCase):
         self.assertEqual(unit.outputs[0].shape, (2, 3))
         self.assertEqual(unit.decision_ids, (trace.decisions[0].id,))
         self.assertIsNone(unit.expected_kernel_launches)
-        self.assertIsNone(unit.implementation_binding_id)
-        self.assertEqual(trace.bindings, ())
+        self.assertEqual(
+            unit.implementation_binding_id,
+            "binding.linearRelu.0.unbound",
+        )
+        self.assertEqual(len(trace.bindings), 1)
+        binding = trace.bindings[0]
+        self.assertEqual(binding.id, unit.implementation_binding_id)
+        self.assertEqual(binding.unit_id, unit.id)
+        self.assertIs(binding.status, BindingStatus.UNBOUND)
+        self.assertIsNone(binding.backend)
+        self.assertIsNone(binding.target)
+        self.assertIsNone(binding.implementation_ref)
+        self.assertEqual(
+            binding.selection_reason,
+            "Backend and implementation resolution has not been performed.",
+        )
         self.assertEqual(trace.evidence, ())
         self.assertIs(
             compare_plan_to_evidence(unit, None).kernel_launches.status,
             VerificationStatus.NOT_APPLICABLE,
         )
+
+        relu_implementation = ReluOperator().implementations[0]
+        with self.assertRaisesRegex(ValueError, "is not registered"):
+            select_implementation(
+                trace,
+                unit,
+                LinearReluOperator(),
+                relu_implementation,
+                backend="cuda",
+            )
+        self.assertIs(binding.status, BindingStatus.UNBOUND)
 
     def test_unverified_equivalence_cannot_be_recorded(self) -> None:
         original, rewritten, legality, verification = _verified_rewrite()
@@ -113,6 +144,41 @@ class SemanticFusionRecordTests(unittest.TestCase):
                 legality,
                 failed,
             )
+
+    def test_primitive_cuda_assets_do_not_select_a_fused_implementation(
+        self,
+    ) -> None:
+        repository_root = Path(__file__).resolve().parents[1]
+        for operator_name in ("gemm", "add", "relu"):
+            source_path = (
+                repository_root
+                / "operators"
+                / operator_name
+                / f"{operator_name}.cu"
+            )
+            self.assertTrue(source_path.is_file())
+        self.assertFalse((repository_root / "operators" / "linear_relu").exists())
+        self.assertEqual(LinearReluOperator().implementations, ())
+
+        original, rewritten, legality, verification = _verified_rewrite()
+        trace = record_linear_relu_semantic_fusion(
+            original,
+            rewritten,
+            legality,
+            verification,
+        )
+        unit = trace.plans[0].units[0]
+        binding = trace.bindings[0]
+
+        self.assertIs(binding.status, BindingStatus.UNBOUND)
+        self.assertIsNone(binding.backend)
+        self.assertIsNone(binding.implementation_ref)
+        self.assertIsNone(unit.expected_kernel_launches)
+        self.assertEqual(trace.evidence, ())
+        self.assertIs(
+            compare_plan_to_evidence(unit, None).kernel_launches.status,
+            VerificationStatus.NOT_APPLICABLE,
+        )
 
     def test_a_different_rewritten_graph_cannot_be_recorded(self) -> None:
         original, rewritten, legality, verification = _verified_rewrite()

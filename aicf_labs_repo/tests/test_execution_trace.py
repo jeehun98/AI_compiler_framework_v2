@@ -151,6 +151,56 @@ class ExecutionTraceTests(unittest.TestCase):
         self.assertIs(binding.status, BindingStatus.SELECTED)
         self.assertEqual(binding.implementation_ref, "operator:add")
 
+    def test_only_unbound_binding_may_precede_backend_selection(self) -> None:
+        unresolved = ImplementationBinding(
+            id="binding.linear_relu.unbound",
+            unit_id="plan.linear_relu.unit0",
+            backend=None,
+            status=BindingStatus.UNBOUND,
+        )
+
+        self.assertIsNone(unresolved.backend)
+        with self.assertRaisesRegex(ValueError, "requires a backend"):
+            ImplementationBinding(
+                id="binding.linear_relu.selected",
+                unit_id="plan.linear_relu.unit0",
+                backend=None,
+                status=BindingStatus.SELECTED,
+                implementation_ref="operator:linearRelu",
+                selection_reason="A concrete implementation was selected.",
+            )
+
+    def test_unavailable_binding_records_a_failed_backend_lookup(self) -> None:
+        unavailable = ImplementationBinding(
+            id="binding.linear_relu.cuda.unavailable",
+            unit_id="plan.linear_relu.unit0",
+            backend="cuda",
+            target="sm_86",
+            status=BindingStatus.UNAVAILABLE,
+            selection_reason=(
+                "No registered CUDA implementation realizes linearRelu."
+            ),
+        )
+
+        self.assertIs(unavailable.status, BindingStatus.UNAVAILABLE)
+        self.assertEqual(unavailable.backend, "cuda")
+        self.assertIsNone(unavailable.implementation_ref)
+        with self.assertRaisesRegex(ValueError, "cannot name an implementation"):
+            ImplementationBinding(
+                id="binding.linear_relu.cuda.invalid",
+                unit_id="plan.linear_relu.unit0",
+                backend="cuda",
+                status=BindingStatus.UNAVAILABLE,
+                implementation_ref="operator:linearRelu",
+            )
+        with self.assertRaisesRegex(ValueError, "requires a backend"):
+            ImplementationBinding(
+                id="binding.linear_relu.unknown.unavailable",
+                unit_id="plan.linear_relu.unit0",
+                backend=None,
+                status=BindingStatus.UNAVAILABLE,
+            )
+
     def test_execution_evidence_can_keep_unobserved_fields_none(self) -> None:
         evidence = ExecutionEvidence(
             id="evidence.add.sm86.partial",

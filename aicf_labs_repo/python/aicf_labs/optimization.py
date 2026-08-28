@@ -9,8 +9,10 @@ from .frontend import (
 from .trace_registry import TraceRecord
 from .tracing import (
     Attribute,
+    BindingStatus,
     DecisionKind,
     ExecutionPlan,
+    ImplementationBinding,
     OptimizationDecision,
     PlannedExecutionUnit,
     ValueSpec,
@@ -52,6 +54,7 @@ def record_linear_relu_semantic_fusion(
     decision_id = f"decision.{fused.id}"
     plan_id = f"plan.{fused.id}"
     unit_id = f"{plan_id}.unit0"
+    binding_id = f"binding.{fused.id}.unbound"
 
     decision = OptimizationDecision(
         id=decision_id,
@@ -85,13 +88,23 @@ def record_linear_relu_semantic_fusion(
         outputs=(_value_spec(rewritten, fused.id),),
         decision_ids=(decision.id,),
         expected_kernel_launches=None,
-        implementation_binding_id=None,
+        implementation_binding_id=binding_id,
     )
     plan = ExecutionPlan(id=plan_id, units=(unit,))
+    binding = ImplementationBinding(
+        id=binding_id,
+        unit_id=unit.id,
+        backend=None,
+        status=BindingStatus.UNBOUND,
+        selection_reason=(
+            "Backend and implementation resolution has not been performed."
+        ),
+    )
     return TraceRecord(
         logical_operator_ids=legality.candidate.node_ids,
         decisions=(decision,),
         plans=(plan,),
+        bindings=(binding,),
     )
 
 

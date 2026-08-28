@@ -21,6 +21,7 @@ from .masks import MaskSummary, OperatorMask, summarize_masks
 from .model import Model
 from .operator import Operator
 from .optimization import record_linear_relu_semantic_fusion
+from .selection import select_implementation
 from .sequential import Sequential
 from .trace_registry import TraceRecord, TraceValidationError
 from .tracing import (
@@ -93,6 +94,7 @@ __all__ = (
     "find_linear_relu_candidates",
     "rewrite_linear_relu",
     "record_linear_relu_semantic_fusion",
+    "select_implementation",
     "simplify_graph",
     "trace_model",
 )

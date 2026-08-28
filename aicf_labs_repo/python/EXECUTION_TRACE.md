@@ -29,6 +29,10 @@ implementation reference로 lowering했는지 기록한다. 기존 Python
 `Implementation`은 operator에 속한 구체 구현 설명이고, binding은 그 구현을
 선택하는 별도 record다. 구현이 아직 없으면 `BindingStatus.UNBOUND`, 알려진
 target에 사용할 수 없으면 `UNAVAILABLE`로 남길 수 있다.
+Backend 선택 자체를 아직 수행하지 않은 `UNBOUND` record에서는 `backend=None`도
+허용한다. `SELECTED`와 `UNAVAILABLE`에는 실제 backend 이름이 반드시 필요하다.
+`UNAVAILABLE`은 해당 backend에서 lookup을 수행했지만 구현을 찾지 못했다는
+결과이므로 `implementation_ref`를 가질 수 없다.
 
 Runtime probing은 `ExecutionEvidence`에 profiler, runtime trace, binary/SASS,
 validation, benchmark에서 실제로 관찰한 사실만 기록한다. 관찰하지 않은 launch
@@ -43,8 +47,9 @@ semantic verification을 통과한 결정을 기록한다. `compare_plan_to_evid
 `MatMul -> Add -> ReLU` rewrite와 동등성 비교가 모두 성공한 경우에만
 `SEMANTIC_FUSION` decision을 만든다. 기존 schema의 output reference를 만족시키기
 위해 logical plan unit도 생성하지만 kernel launch 수를 예상하지 않고 binding과
-evidence를 만들지 않는다. 따라서 이 record는 semantic rewrite가 일어났다는 기록일
-뿐 backend fusion의 관측이 아니다.
+evidence를 만들지 않는다. 대신 unit에는 backend와 implementation을 아직 선택하지
+않았다는 `UNBOUND` binding을 연결한다. 따라서 이 record는 semantic rewrite가
+일어났다는 기록일 뿐 backend fusion의 관측이 아니다.
 
 ## Three different kinds of fusion
 
@@ -74,10 +79,12 @@ Instruction feature나 memory traffic 비교는 아직 자동화하지 않는다
 ## Relationship to operator knowledge
 
 `operators/*/operator.json`, `knowledge/index.json`,
-`knowledge/schemas/operator.schema.json`은 CUDA operator 의미, 구현, artifact의
-canonical 지식 계층이다. Trace object는 이 파일을 복제하거나 schema를 확장하지
-않는다. `implementation_ref="operator:add"` 같은 안정적 참조와
-repository-relative `ArtifactReference`만 보유한다.
+`knowledge/schemas/operator.schema.json`은 등록이 완료된 CUDA operator 의미, 구현,
+artifact의 canonical 지식 계층이다. 현재 index에 등록된 operator는 `abs`, `neg`,
+`relu`뿐이다. Trace object는 이 파일을 복제하거나 schema를 확장하지 않는다.
+`implementation_ref`는 stable string만 검증하며 외부 metadata 존재 여부를
+역참조하지 않는다. 따라서 Add E2E의 `operator:add`는 기존 실험을 식별하는 느슨한
+참조이지, 현재 knowledge index 등록을 뜻하지 않는다.
 
 Artifact path는 객체 ID가 아니다. 절대 경로, Windows separator와 `..` traversal은
 거부한다. `TraceRecord`는 메모리 안에서 logical/decision/plan unit/binding/evidence
@@ -134,11 +141,69 @@ trace = TraceRecord(
 result = compare_plan_to_evidence(unit, evidence)
 ```
 
-Semantic fusion 뒤 backend selection을 아직 시도하지 않았다면 binding을 생략하고
-expected launch 수도 정의하지 않는다. 이 경우 비교 결과는 `NOT_APPLICABLE`이다.
-Selection을 시도했지만 verified fused backend가 없다면 여러 logical operator ID를
-한 unit에 두고 UNBOUND binding을 연결할 수 있다. Evidence는 만들지 않으며 기존
-GEMM/add artifact를 fused implementation이라고 연결하지 않는다.
+Semantic fusion 뒤 backend selection을 아직 시도하지 않았다면 backend가 없는
+`UNBOUND` binding을 연결하고 expected launch 수는 정의하지 않는다. 이 경우 비교
+결과는 `NOT_APPLICABLE`이다.
+Selection을 특정 backend에서 시도했지만 verified fused implementation이 없다면
+여러 logical operator ID를 한 unit에 두고 그 backend의 `UNAVAILABLE` binding을
+연결할 수 있다. Evidence는 만들지 않으며 기존 GEMM/add artifact를 fused
+implementation이라고 연결하지 않는다.
+
+## Explicit implementation selection
+
+`select_implementation()`은 현재 유일한 production selection 경로다. 호출자가
+trace의 정확한 `PlannedExecutionUnit`, owning `Operator`, 그 operator에 등록된
+`Implementation`, backend와 optional target을 직접 전달한다.
+
+```python
+selected_trace = select_implementation(
+    trace,
+    unit,
+    relu_operator,
+    relu_operator.implementations[0],
+    backend="cuda",
+    target="sm_86",
+)
+```
+
+함수는 기존 `UNBOUND` binding과 같은 ID의 `SELECTED` binding을 가진 새
+`TraceRecord`를 반환한다. Unit reference와 원본 trace는 변경하지 않는다. 선택된
+reference는 operator-local implementation name을 포함한
+`operator:relu:implementation:fp32_scalar` 형식이며, 기존 `configuration`에
+`selection_mode=explicit`을 기록한다.
+
+현재 `Implementation` 모델은 CUDA source/kernel만 설명하므로 backend는 `cuda`만
+허용한다. 등록 여부, unit/binding reference, operator arity, 명시된 input/output
+dtype만 검사한다. `PlannedExecutionUnit`에는 logical operator identity field가
+없으므로 전달된 operator가 unit의 실제 의미와 동일하다는 사실까지 검증하지는
+않는다.
+
+Selection은 implementation 존재나 실행의 증거가 아니다. 함수는 plan의
+`expected_kernel_launches`, evidence, artifact, runtime observation을 생성하거나
+변경하지 않는다.
+
+## Existing CUDA asset boundary
+
+Repository의 기존 CUDA workflow는 서로 다른 산출물을 만든다.
+
+```text
+operators/<op>/<op>.cu
+  -> tools/operator/build.ps1   -> build/<op>.exe
+  -> tools/operator/observe.ps1 -> artifacts/<op>.cubin, <op>.sass
+  -> tools/operator/measure.ps1 -> runtime/<op>.*
+```
+
+이 tool들은 Python `Implementation`, `ImplementationBinding`, `ExecutionEvidence`를
+자동 생성하지 않는다. Source는 구현 선언, executable/cubin/SASS는 build·static
+artifact, runtime report는 특정 probe 실행의 관측이다. 각 파일은 해당 단계의
+증거일 뿐 다음 단계의 사실을 자동으로 증명하지 않는다.
+
+현재 `LinearReluOperator`에는 등록된 `Implementation`이 없고 repository에도
+`operators/linear_relu` 또는 GEMM+bias+ReLU epilogue kernel이 없다. 기존
+`gemm`, `add`, `relu` artifact 세트를 하나의 fused implementation으로 연결하지
+않는다. 그러므로 semantic-fusion record는 backend lookup 전 `UNBOUND`를 유지한다.
+향후 CUDA lookup을 실제로 수행했지만 fused implementation을 찾지 못한 경우에만
+`backend="cuda"`, `status=UNAVAILABLE`, `implementation_ref=None`을 기록한다.
 
 ## Direct CUDA end-to-end test
 
