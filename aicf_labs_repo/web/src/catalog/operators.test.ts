@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { matchesMask, OperatorMask, summarizeMasks } from '../domain/operator';
+import {
+  capabilitiesForProperty,
+  deriveTransformationCapabilities,
+  PropertyKind,
+  TransformationCapability,
+} from '../domain/property';
 import { OPERATORS, OPERATOR_MAP } from './operators';
 
 describe('operator catalog', () => {
@@ -28,5 +34,52 @@ describe('operator catalog', () => {
 
     expect(summary.common).toBe(OperatorMask.ELEMENTWISE | OperatorMask.PURE);
     expect(matchesMask(summary.present, OperatorMask.BROADCAST)).toBe(true);
+  });
+
+  it('declares scoped linearity for both MatMul inputs', () => {
+    const claims = OPERATOR_MAP.matmul.propertyClaims.filter(({ kind }) => kind === PropertyKind.LINEAR);
+    expect(claims.map(({ scope }) => scope)).toEqual([
+      { kind: 'input', inputPort: 'in-0' },
+      { kind: 'input', inputPort: 'in-1' },
+    ]);
+    expect(claims.map(({ conditions }) => conditions)).toEqual([
+      [{ kind: 'input-fixed', inputPort: 'in-1' }],
+      [{ kind: 'input-fixed', inputPort: 'in-0' }],
+    ]);
+    expect(claims.every((claim) => capabilitiesForProperty(claim).includes(TransformationCapability.SCALE_PROPAGATION))).toBe(true);
+  });
+
+  it('derives the requested scale capabilities from ReduceSum and ReLU claims', () => {
+    const reduceLinearity = OPERATOR_MAP.reduceSum.propertyClaims.find(({ kind }) => kind === PropertyKind.LINEAR);
+    const reluHomogeneity = OPERATOR_MAP.relu.propertyClaims.find(({ kind }) => kind === PropertyKind.POSITIVE_HOMOGENEOUS);
+    expect(reduceLinearity?.scope).toEqual({ kind: 'input', inputPort: 'in-0' });
+    expect(reluHomogeneity?.scope).toEqual({ kind: 'input', inputPort: 'in-0' });
+    expect(reluHomogeneity?.conditions).toEqual([{ kind: 'scale-comparison', operator: '>=', value: 0 }]);
+    expect(reduceLinearity && capabilitiesForProperty(reduceLinearity)).toContain(TransformationCapability.SCALE_PROPAGATION);
+    expect(reluHomogeneity && capabilitiesForProperty(reluHomogeneity)).toContain(TransformationCapability.POSITIVE_SCALE_PROPAGATION);
+  });
+
+  it('does not invent scale properties for an unsupported operator', () => {
+    expect(OPERATOR_MAP.transpose.propertyClaims.some(({ kind }) =>
+      kind === PropertyKind.LINEAR || kind === PropertyKind.POSITIVE_HOMOGENEOUS)).toBe(false);
+  });
+
+  it('derives reassociation from associative metadata as a set-level capability', () => {
+    const addAssociativity = OPERATOR_MAP.add.propertyClaims.find(
+      ({ kind }) => kind === PropertyKind.ASSOCIATIVE,
+    );
+    expect(addAssociativity?.scope).toEqual({ kind: 'operator' });
+    expect(OPERATOR_MAP.matmul.propertyClaims.some(
+      ({ kind }) => kind === PropertyKind.ASSOCIATIVE,
+    )).toBe(false);
+    expect(deriveTransformationCapabilities(OPERATOR_MAP.add.propertyClaims)).toContain(
+      TransformationCapability.REASSOCIATION,
+    );
+    expect(deriveTransformationCapabilities(OPERATOR_MAP.mul.propertyClaims)).toContain(
+      TransformationCapability.REASSOCIATION,
+    );
+    expect(deriveTransformationCapabilities(OPERATOR_MAP.matmul.propertyClaims)).not.toContain(
+      TransformationCapability.REASSOCIATION,
+    );
   });
 });

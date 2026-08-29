@@ -165,7 +165,7 @@ describe('rewrite matching and application', () => {
     const rejected = {
       ...base,
       id: 'condition-rejected',
-      findMatches: () => [],
+      matchStructure: () => [],
       apply(graphValue: Graph, match: Parameters<typeof base.apply>[1]) {
         applyCalled = true;
         return base.apply(graphValue, match);
@@ -202,9 +202,11 @@ describe('rewrite matching and application', () => {
 });
 
 describe('rewrite metadata', () => {
-  it('defines the seven requested rules in deterministic order', () => {
+  it('defines the existing, scale-propagation, and reassociation rules in deterministic order', () => {
     expect(REWRITE_RULES.map(({ id }) => id)).toEqual([
       'add-zero', 'mul-one', 'mul-zero', 'constant-fold', 'add-commute', 'mul-commute', 'double-transpose',
+      'scale-through-linear', 'scale-through-positive-homogeneous',
+      'reassociate-associative-right',
     ]);
   });
 

@@ -16,6 +16,7 @@ export type OperatorCategory =
   | 'reduction';
 
 import type { FreedomProfile } from './freedom';
+import type { PropertyClaim } from './property';
 
 // Positive, cheap screening features. Absence is not proof of the opposite.
 export const OperatorMask = {
@@ -66,6 +67,7 @@ export interface Operator {
   category: OperatorCategory;
   arity: number;
   mask: OperatorMask;
+  propertyClaims: readonly PropertyClaim[];
   inputPorts: InputPortDefinition[];
   meaning: string;
   latexTemplate: string;

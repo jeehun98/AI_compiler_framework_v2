@@ -90,6 +90,9 @@ describe('rewrite mask instrumentation', () => {
       { ruleId: 'add-commute', nodesScanned: 20, maskAccepted: 6, conditionAccepted: 3, rewritesApplied: 3 },
       { ruleId: 'mul-commute', nodesScanned: 20, maskAccepted: 6, conditionAccepted: 3, rewritesApplied: 3 },
       { ruleId: 'double-transpose', nodesScanned: 20, maskAccepted: 3, conditionAccepted: 1, rewritesApplied: 1 },
+      { ruleId: 'scale-through-linear', nodesScanned: 20, maskAccepted: 13, conditionAccepted: 0, rewritesApplied: 0 },
+      { ruleId: 'scale-through-positive-homogeneous', nodesScanned: 20, maskAccepted: 13, conditionAccepted: 1, rewritesApplied: 1 },
+      { ruleId: 'reassociate-associative-right', nodesScanned: 20, maskAccepted: 13, conditionAccepted: 0, rewritesApplied: 0 },
     ]);
     expect(byRule['add-zero'].maskPassRate).toBeCloseTo(0.4);
     expect(byRule['add-zero'].conditionPassRate).toBeCloseTo(0.125);
@@ -113,7 +116,7 @@ describe('rewrite mask instrumentation', () => {
     const value = representativeGraph();
 
     for (const rule of REWRITE_RULES) {
-      const legalWithoutMask = rule.findMatches(value, value.nodes);
+      const legalWithoutMask = rule.matchStructure(value, value.nodes);
       const maskCandidates = nodesMatchingMask(value, rule.requiredMask);
       const acceptedRootIds = new Set(maskCandidates.map(({ id }) => id));
       expect(
@@ -170,16 +173,22 @@ describe('current feature usage', () => {
     });
   });
 
-  it('shows PURE has no independent screening effect in the current catalog', () => {
+  it('keeps legacy PURE screening behavior and uses PURE as the scale-rule root screen', () => {
     const value = representativeGraph();
 
-    for (const rule of REWRITE_RULES) {
+    for (const rule of REWRITE_RULES.filter(({ id }) =>
+      !id.startsWith('scale-through-') && id !== 'reassociate-associative-right')) {
       const withPure = nodesMatchingMask(value, rule.requiredMask).length;
       const withoutPure = nodesMatchingMask(
         value,
         rule.requiredMask & ~OperatorMask.PURE,
       ).length;
       expect(withPure, rule.id).toBe(withoutPure);
+    }
+    for (const rule of REWRITE_RULES.filter(({ id }) =>
+      id.startsWith('scale-through-') || id === 'reassociate-associative-right')) {
+      expect(nodesMatchingMask(value, rule.requiredMask)).toHaveLength(13);
+      expect(nodesMatchingMask(value, rule.requiredMask & ~OperatorMask.PURE)).toHaveLength(20);
     }
   });
 
