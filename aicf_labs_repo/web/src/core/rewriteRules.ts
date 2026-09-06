@@ -4,6 +4,18 @@ import type { Graph, GraphEdge, GraphNode, InputPortId } from '../domain/graph';
 import { OperatorMask } from '../domain/operator';
 import { PropertyKind, TransformationCapability } from '../domain/property';
 import {
+  CorrespondingElementMapping,
+  DependencyKind,
+  DependencyFootprintKind,
+  MaterializationRequirement,
+  ReuseKind,
+  TransformationFactKind,
+  type DependencyFootprint,
+  type OperatorSemanticFacts,
+  type ProducerEmbeddingEvidence,
+  type ReuseRelation,
+} from '../domain/semantic';
+import {
   LegalityStatus,
   SemanticDomain,
   type LegalityResult,
@@ -66,8 +78,17 @@ function applicable(reason: string, checkedConditions: readonly string[] = []): 
   return { status: LegalityStatus.APPLICABLE, reason, checkedConditions };
 }
 
-function wholeProperty(kind: PropertyRequirement['kind']): PropertyRequirement {
-  return { kind, operatorBinding: 'operator', scope: { kind: 'operator' } };
+function wholeProperty(
+  kind: PropertyRequirement['kind'],
+  operatorBinding = 'operator',
+  missingPropertyStatus?: PropertyRequirement['missingPropertyStatus'],
+): PropertyRequirement {
+  return {
+    kind,
+    operatorBinding,
+    scope: { kind: 'operator' },
+    ...(missingPropertyStatus ? { missingPropertyStatus } : {}),
+  };
 }
 
 function standardReasoning(
@@ -786,6 +807,479 @@ const reassociateAssociativeRightRule: RewriteRule = {
   apply: reassociateAssociativeRight,
 };
 
+const producerEmbeddingDependencyReason = 'Each producer output element is consumed independently by the reduction and no full producer tensor is required before reduction can proceed.';
+
+function reductionInputFusionStructureMatches(
+  graph: Graph,
+  candidates: readonly GraphNode[],
+): RewriteMatch[] {
+  const matches: RewriteMatch[] = [];
+  for (const consumer of candidates) {
+    const incomingEdges = graph.edges
+      .filter(({ targetNodeId }) => targetNodeId === consumer.id)
+      .sort((left, right) => left.targetPort.localeCompare(right.targetPort) || left.id.localeCompare(right.id));
+    for (const producerToConsumer of incomingEdges) {
+      const producer = nodeById(graph, producerToConsumer.sourceNodeId);
+      if (!producer) continue;
+      if (graph.semanticRegions?.some((region) =>
+        region.kind === 'reduction-input-fusion'
+        && region.inputTransformNodeId === producer.id
+        && region.reducerNodeId === consumer.id
+        && region.reducerInputPort === producerToConsumer.targetPort)) continue;
+      matches.push({
+        id: `embed-elementwise-producer-into-reduction:${consumer.id}:${producerToConsumer.targetPort}:${producer.id}`,
+        ruleId: 'embed-elementwise-producer-into-reduction',
+        rootNodeId: consumer.id,
+        nodeIds: [producer.id, consumer.id],
+        bindings: {
+          operator: producer.id,
+          producer: producer.id,
+          consumer: consumer.id,
+          consumerInputPort: producerToConsumer.targetPort,
+          producerToConsumerEdge: producerToConsumer.id,
+        },
+        facts: [{
+          scope: 'graph-instance',
+          kind: TransformationFactKind.DIRECT_DATAFLOW,
+          reason: `${producer.id}.out directly supplies ${consumer.id}.${producerToConsumer.targetPort}.`,
+        }],
+        summary: `${producer.id}을 ${consumer.id}의 reduction input transform region으로 합성`,
+      });
+    }
+  }
+  return matches;
+}
+
+interface ResolvedProducerSemantics {
+  footprint: DependencyFootprint;
+  reuse: ReuseRelation;
+}
+
+function unknownFootprint(reason: string): DependencyFootprint {
+  return { kind: DependencyFootprintKind.UNKNOWN, reason };
+}
+
+function resolveProducerSemantics(
+  graph: Graph,
+  producerId: string,
+  declared: OperatorSemanticFacts | undefined,
+): ResolvedProducerSemantics {
+  const unknownReuse = (reason: string): ReuseRelation => ({ kind: ReuseKind.UNKNOWN, reason });
+  if (!declared || declared.dependencyFootprint.kind === DependencyFootprintKind.UNKNOWN) {
+    const reason = declared?.dependencyFootprint.reason ?? 'Producer semantic metadata is unavailable.';
+    return { footprint: unknownFootprint(reason), reuse: declared?.reuse ?? unknownReuse(reason) };
+  }
+  if (declared.dependencyFootprint.kind !== DependencyFootprintKind.CORRESPONDING_ELEMENT) {
+    const reason = `Producer footprint ${declared.dependencyFootprint.kind} is not a corresponding-element mapping.`;
+    return { footprint: unknownFootprint(reason), reuse: unknownReuse(reason) };
+  }
+
+  const outputShape = inferNodeShape(graph, producerId);
+  const inputEdges = graph.edges
+    .filter(({ targetNodeId }) => targetNodeId === producerId)
+    .sort((left, right) => left.targetPort.localeCompare(right.targetPort) || left.id.localeCompare(right.id));
+  const inputShapes = inputEdges.map(({ sourceNodeId }) => inferNodeShape(graph, sourceNodeId));
+  if (outputShape === undefined || inputEdges.length === 0 || inputShapes.some((shape) => shape === undefined)) {
+    return {
+      footprint: unknownFootprint('Producer input/output shapes are insufficient to resolve its dependency mapping.'),
+      reuse: unknownReuse('Producer input/output shapes are unknown.'),
+    };
+  }
+
+  const equalToOutput = (shape: NonNullable<(typeof inputShapes)[number]>) =>
+    JSON.stringify(shape) === JSON.stringify(outputShape);
+  if (declared.dependencyFootprint.inputMapping === CorrespondingElementMapping.EXACT) {
+    if (!(inputShapes as NonNullable<(typeof inputShapes)[number]>[]).every(equalToOutput)) {
+      return {
+        footprint: unknownFootprint('The exact corresponding-element mapping conflicts with the inferred shapes.'),
+        reuse: unknownReuse('The exact element mapping could not be confirmed.'),
+      };
+    }
+    return { footprint: declared.dependencyFootprint, reuse: declared.reuse };
+  }
+
+  const knownInputShapes = inputShapes as NonNullable<(typeof inputShapes)[number]>[];
+  const exactOrScalar = knownInputShapes.every((shape) => shape.length === 0 || equalToOutput(shape));
+  if (!exactOrScalar) {
+    return {
+      footprint: unknownFootprint('Non-scalar broadcast dependency mapping is not modeled by the current footprint resolver.'),
+      reuse: unknownReuse('Non-scalar broadcast reuse across outputs is not modeled.'),
+    };
+  }
+  const scalarIsReused = outputShape.length > 0 && knownInputShapes.some((shape) => shape.length === 0);
+  return {
+    footprint: {
+      ...declared.dependencyFootprint,
+      reason: scalarIsReused
+        ? 'Each producer output reads corresponding tensor elements plus scalar broadcast inputs.'
+        : 'All producer inputs map exactly to corresponding output elements.',
+    },
+    reuse: scalarIsReused
+      ? { kind: ReuseKind.ACROSS_OUTPUTS, reason: 'Scalar broadcast inputs are reused across producer output elements.' }
+      : { kind: ReuseKind.NONE, reason: 'No producer input value is reused across output elements.' },
+  };
+}
+
+function resolveConsumerFootprint(
+  consumer: GraphNode | undefined,
+  declared: OperatorSemanticFacts | undefined,
+): DependencyFootprint {
+  if (!declared || declared.dependencyFootprint.kind !== DependencyFootprintKind.FULL_AXIS) {
+    return unknownFootprint(declared?.dependencyFootprint.reason ?? 'Consumer dependency footprint is unavailable.');
+  }
+  if (!consumer || !('axis' in consumer.parameters)
+    || !('keepDims' in consumer.parameters)
+    || (consumer.parameters.axis !== 'all' && !Number.isInteger(consumer.parameters.axis))) {
+    return unknownFootprint('The reduction axis relation is not known for this consumer instance.');
+  }
+  return {
+    ...declared.dependencyFootprint,
+    axis: consumer.parameters.axis,
+    reason: `Each consumer output depends on the full input extent along axis ${String(consumer.parameters.axis)}.`,
+  };
+}
+
+function semanticFactsForBinding(
+  context: RuleEvaluationContext,
+  binding: string,
+): OperatorSemanticFacts | undefined {
+  return context.operatorSemanticFacts.find((resolved) => resolved.binding === binding)?.facts;
+}
+
+function checkReductionInputFusionMathematics(
+  graph: Graph,
+  match: RewriteMatch,
+  context: RuleEvaluationContext,
+): LegalityResult {
+  const producerElementwise = context.resolvedProperties.some(({ operatorNodeId, claim }) =>
+    operatorNodeId === match.bindings.producer && claim.kind === PropertyKind.ELEMENTWISE);
+  const consumerReduction = context.resolvedProperties.some(({ operatorNodeId, claim }) =>
+    operatorNodeId === match.bindings.consumer && claim.kind === PropertyKind.REDUCTION);
+  const directDataflow = match.facts?.some(({ kind }) => kind === TransformationFactKind.DIRECT_DATAFLOW) ?? false;
+  if (!producerElementwise || !consumerReduction || !directDataflow) {
+    return {
+      status: LegalityStatus.UNKNOWN,
+      reason: 'The elementwise dependency and direct reduction-input relation could not be established.',
+    };
+  }
+  const producerSemantics = resolveProducerSemantics(
+    graph,
+    match.bindings.producer,
+    semanticFactsForBinding(context, 'producer'),
+  );
+  const consumerFacts = semanticFactsForBinding(context, 'consumer');
+  const consumerFootprint = resolveConsumerFootprint(
+    nodeById(graph, match.bindings.consumer),
+    consumerFacts,
+  );
+  if (producerSemantics.footprint.kind === DependencyFootprintKind.UNKNOWN) {
+    return {
+      status: LegalityStatus.UNKNOWN,
+      reason: `Producer dependency footprint is unresolved: ${producerSemantics.footprint.reason}`,
+    };
+  }
+  if (consumerFootprint.kind === DependencyFootprintKind.UNKNOWN) {
+    return {
+      status: LegalityStatus.UNKNOWN,
+      reason: `Consumer dependency footprint is unresolved: ${consumerFootprint.reason}`,
+    };
+  }
+  if (consumerFootprint.kind !== DependencyFootprintKind.FULL_AXIS) {
+    return {
+      status: LegalityStatus.UNKNOWN,
+      reason: `Consumer dependency footprint ${consumerFootprint.kind} is not a modeled reduction axis.`,
+    };
+  }
+  if (!consumerFacts?.partialState?.supportsIncrementalUpdate
+    || !consumerFacts.partialState.supportsMerge) {
+    return {
+      status: LegalityStatus.UNKNOWN,
+      reason: 'The consumer does not declare incremental, mergeable partial-state semantics.',
+    };
+  }
+  return applicable(
+    'Corresponding producer values can be generated on demand and incrementally accumulated into a mergeable reduction partial state.',
+    [
+      'producer declares ELEMENTWISE(operator)',
+      `producer dependency footprint = ${producerSemantics.footprint.kind}`,
+      `producer reuse = ${producerSemantics.reuse.kind}`,
+      'consumer declares REDUCTION(consumer)',
+      `consumer dependency footprint = ${consumerFootprint.kind}(${String(consumerFootprint.axis)})`,
+      'consumer partial state supports incremental update',
+      'consumer partial state supports merge',
+      'producer output directly supplies the matched consumer input',
+      producerEmbeddingDependencyReason,
+    ],
+  );
+}
+
+function reductionInputFusionRegion(graph: Graph, match: RewriteMatch): Graph {
+  const producerId = match.bindings.producer;
+  const consumerId = match.bindings.consumer;
+  const consumerInputPort = match.bindings.consumerInputPort as InputPortId;
+  const regionId = `reduction-input-fusion:${consumerId}:${consumerInputPort}:${producerId}`;
+  if (graph.semanticRegions?.some(({ id }) => id === regionId)) return graph;
+  const producerInputNodeIds = graph.edges
+    .filter(({ targetNodeId }) => targetNodeId === producerId)
+    .sort((left, right) => left.targetPort.localeCompare(right.targetPort) || left.id.localeCompare(right.id))
+    .map(({ sourceNodeId }) => sourceNodeId);
+  return {
+    ...graph,
+    semanticRegions: [
+      ...(graph.semanticRegions ?? []),
+      {
+        id: regionId,
+        kind: 'reduction-input-fusion',
+        inputTransformNodeId: producerId,
+        reducerNodeId: consumerId,
+        reducerInputPort: consumerInputPort,
+        producerInputNodeIds,
+        dependencyKind: DependencyKind.ELEMENTWISE_CORRESPONDING_INPUTS,
+        materializationRequirement: MaterializationRequirement.NOT_REQUIRED,
+      },
+    ],
+  };
+}
+
+function checkReductionInputFusionGraphLegality(
+  graph: Graph,
+  match: RewriteMatch,
+  context: RuleEvaluationContext,
+): LegalityResult {
+  const producerId = match.bindings.producer;
+  const consumerId = match.bindings.consumer;
+  const producer = nodeById(graph, producerId);
+  const consumer = nodeById(graph, consumerId);
+  const directEdge = graph.edges.find(({ id }) => id === match.bindings.producerToConsumerEdge);
+  const consumers = getConsumers(graph, producerId);
+  const outgoingUses = graph.edges.filter(({ sourceNodeId }) => sourceNodeId === producerId);
+
+  if (getConsumerCount(graph, producerId) > 1) {
+    return {
+      status: LegalityStatus.REJECTED,
+      reason: 'The producer result has multiple consumers.',
+      checkedConditions: [
+        `producer consumer count = ${getConsumerCount(graph, producerId)}`,
+        `producer outgoing use count = ${outgoingUses.length}`,
+      ],
+    };
+  }
+  if (getConsumerCount(graph, producerId) !== 1 || consumers[0]?.id !== consumerId || outgoingUses.length !== 1) {
+    return {
+      status: LegalityStatus.REJECTED,
+      reason: 'Producer embedding requires exactly one producer-result use targeting the matched reduction.',
+    };
+  }
+  if (isGraphOutput(graph, producerId)) {
+    return {
+      status: LegalityStatus.REJECTED,
+      reason: 'The producer result is an explicit graph output and must remain materialized.',
+    };
+  }
+  if (!producer || !consumer || !directEdge
+    || directEdge.sourceNodeId !== producerId
+    || directEdge.targetNodeId !== consumerId
+    || directEdge.targetPort !== match.bindings.consumerInputPort) {
+    return {
+      status: LegalityStatus.REJECTED,
+      reason: 'The matched consumer input is not supplied exactly by the producer output.',
+    };
+  }
+  const producerPure = context.resolvedProperties.some(({ operatorNodeId, claim }) =>
+    operatorNodeId === producerId && claim.kind === PropertyKind.PURE);
+  const consumerPure = context.resolvedProperties.some(({ operatorNodeId, claim }) =>
+    operatorNodeId === consumerId && claim.kind === PropertyKind.PURE);
+  if (!producerPure || !consumerPure) {
+    return {
+      status: LegalityStatus.REJECTED,
+      reason: 'Both the producer and reduction consumer must be pure.',
+    };
+  }
+
+  const producerShape = inferNodeShape(graph, producerId);
+  const reductionOutputShape = inferNodeShape(graph, consumerId);
+  if (producerShape === undefined || reductionOutputShape === undefined) {
+    return {
+      status: LegalityStatus.UNKNOWN,
+      reason: 'Shape or reduction-axis information is insufficient to establish reduction input compatibility.',
+      checkedConditions: [
+        `producer output shape = ${producerShape === undefined ? 'unknown' : JSON.stringify(producerShape)}`,
+        `reduction output shape = ${reductionOutputShape === undefined ? 'unknown' : JSON.stringify(reductionOutputShape)}`,
+      ],
+    };
+  }
+
+  const producerMetadata = getOperator(producer.operatorId);
+  const shapePreserving = producerMetadata?.propertyClaims.some(
+    ({ kind }) => kind === PropertyKind.SHAPE_PRESERVING,
+  ) ?? false;
+  if (shapePreserving) {
+    const firstInputId = getIncomingEdge(graph, producerId, 'in-0')?.sourceNodeId;
+    const firstInputShape = firstInputId ? inferNodeShape(graph, firstInputId) : undefined;
+    if (firstInputShape === undefined) {
+      return {
+        status: LegalityStatus.UNKNOWN,
+        reason: 'The SHAPE_PRESERVING producer input shape is unknown.',
+      };
+    }
+    if (JSON.stringify(firstInputShape) !== JSON.stringify(producerShape)) {
+      return {
+        status: LegalityStatus.REJECTED,
+        reason: 'The producer shape conflicts with its SHAPE_PRESERVING claim.',
+      };
+    }
+  }
+
+  const transformed = reductionInputFusionRegion(graph, match);
+  const validation = validateGraph(transformed);
+  if (!validation.valid) {
+    return {
+      status: LegalityStatus.REJECTED,
+      reason: `The composed reduction region would be invalid: ${validation.issues.map(({ code }) => code).join(', ')}.`,
+    };
+  }
+  return applicable(
+    'The producer has one consumer, is not a graph output, and the reduction input relation and DAG are preserved.',
+    [
+      'producer consumer count = 1',
+      'producer is not an explicit graph output',
+      'producer and consumer declare PURE(operator)',
+      `producer output/reduction input shape = ${JSON.stringify(producerShape)}`,
+      `reduction output shape = ${JSON.stringify(reductionOutputShape)}`,
+      `SHAPE_PRESERVING producer claim = ${shapePreserving}`,
+      'reduction node identity and attributes are preserved',
+      'semantic region passes graph validation',
+    ],
+  );
+}
+
+function collectReductionInputFusionEvidence(
+  graph: Graph,
+  match: RewriteMatch,
+  context: RuleEvaluationContext,
+  mathematicalLegality: LegalityResult,
+  graphLegality: LegalityResult,
+): ProducerEmbeddingEvidence {
+  const producer = nodeById(graph, match.bindings.producer);
+  const consumer = nodeById(graph, match.bindings.consumer);
+  const producerMetadata = getOperator(producer?.operatorId);
+  const consumerMetadata = getOperator(consumer?.operatorId);
+  const producerProperties = producerMetadata?.propertyClaims
+    .filter(({ kind }) => kind === PropertyKind.ELEMENTWISE
+      || kind === PropertyKind.PURE
+      || kind === PropertyKind.SHAPE_PRESERVING)
+    .map(({ kind }) => kind) ?? [];
+  const consumerProperties = consumerMetadata?.propertyClaims
+    .filter(({ kind }) => kind === PropertyKind.REDUCTION || kind === PropertyKind.PURE)
+    .map(({ kind }) => kind) ?? [];
+  const fallbackSemantics: OperatorSemanticFacts = {
+    scope: 'operator',
+    dependencyFootprint: unknownFootprint('Operator semantic metadata is unavailable.'),
+    reuse: { kind: ReuseKind.UNKNOWN, reason: 'Operator semantic metadata is unavailable.' },
+  };
+  const producerDeclared = semanticFactsForBinding(context, 'producer')
+    ?? producerMetadata?.semanticFacts
+    ?? fallbackSemantics;
+  const consumerDeclared = semanticFactsForBinding(context, 'consumer')
+    ?? consumerMetadata?.semanticFacts
+    ?? fallbackSemantics;
+  const producerResolved = resolveProducerSemantics(graph, match.bindings.producer, producerDeclared);
+  const consumerResolved = resolveConsumerFootprint(consumer, consumerDeclared);
+  const producerUses = graph.edges.filter(({ sourceNodeId }) => sourceNodeId === match.bindings.producer);
+  const directDataflow = producerUses.some(({ id, targetNodeId, targetPort }) =>
+    id === match.bindings.producerToConsumerEdge
+    && targetNodeId === match.bindings.consumer
+    && targetPort === match.bindings.consumerInputPort);
+  const exclusiveUse = producerUses.length === 1
+    && producerUses[0]?.targetNodeId === match.bindings.consumer;
+  const producerIsGraphOutput = isGraphOutput(graph, match.bindings.producer);
+  let requirement: ProducerEmbeddingEvidence['materialization']['requirement'] = MaterializationRequirement.UNKNOWN;
+  let materializationReason = 'Dependency or partial-state semantics are insufficient to decide materialization freedom.';
+  if (mathematicalLegality.status === LegalityStatus.APPLICABLE) {
+    if (graphLegality.status === LegalityStatus.APPLICABLE) {
+      requirement = MaterializationRequirement.NOT_REQUIRED;
+      materializationReason = 'Corresponding producer values can be generated on demand, immediately accumulated into an incremental partial state, and no other graph use requires the full intermediate.';
+    } else if (!exclusiveUse || producerIsGraphOutput) {
+      requirement = MaterializationRequirement.REQUIRED;
+      materializationReason = producerIsGraphOutput
+        ? 'The producer value is an explicit graph output and must remain independently observable.'
+        : 'Another graph use requires the producer result outside the reduction region.';
+    }
+  }
+  return {
+    kind: 'producer-embedding',
+    producerNodeId: match.bindings.producer,
+    producerOperatorId: producer?.operatorId ?? 'unknown',
+    producerProperties,
+    consumerNodeId: match.bindings.consumer,
+    consumerOperatorId: consumer?.operatorId ?? 'unknown',
+    consumerProperties,
+    producerSemantics: {
+      declaredDependencyFootprint: producerDeclared.dependencyFootprint,
+      resolvedDependencyFootprint: producerResolved.footprint,
+      declaredReuse: producerDeclared.reuse,
+      resolvedReuse: producerResolved.reuse,
+    },
+    consumerSemantics: {
+      declaredDependencyFootprint: consumerDeclared.dependencyFootprint,
+      resolvedDependencyFootprint: consumerResolved,
+      reuse: consumerDeclared.reuse,
+      ...(consumerDeclared.partialState ? { partialState: consumerDeclared.partialState } : {}),
+    },
+    graphFacts: {
+      directDataflow,
+      exclusiveUse,
+      producerIsGraphOutput,
+    },
+    dependency: {
+      kind: producerResolved.footprint.kind === DependencyFootprintKind.CORRESPONDING_ELEMENT
+        ? DependencyKind.ELEMENTWISE_CORRESPONDING_INPUTS
+        : DependencyKind.UNKNOWN,
+      reason: producerResolved.footprint.reason,
+    },
+    materialization: {
+      intermediateNodeId: match.bindings.producer,
+      requirement,
+      reason: materializationReason,
+    },
+  };
+}
+
+const embedElementwiseProducerIntoReductionRule: RewriteRule = {
+  id: 'embed-elementwise-producer-into-reduction',
+  name: 'EmbedElementwiseProducerIntoReduction',
+  exactness: 'exact',
+  description: 'Pure elementwise producer를 reduction input transform semantic region으로 합성합니다.',
+  conditions: [
+    'producer output directly supplies the reduction input',
+    'producer result has one outgoing use and is not a graph output',
+    'producer and consumer shapes and reduction attributes are known',
+    'this is semantic region composition, not backend kernel fusion',
+  ],
+  freedom: ruleFreedom(
+    { status: 'available', summary: 'Elementwise evaluation composes with per-element reduction input consumption.', constraints: ['no cross-element producer dependency'] },
+    { status: 'available', summary: 'The logical producer and reduction operations and their order are preserved.', constraints: ['no backend scheduling claim'] },
+    { status: 'conditional', summary: 'A private producer value may be represented inside a reduction region.', constraints: ['one producer use', 'known reduction relation', 'valid DAG'] },
+  ),
+  requiredMask: OperatorMask.PURE,
+  semanticDomain: SemanticDomain.ABSTRACT_REAL,
+  requiredCapabilities: [TransformationCapability.REDUCTION_INPUT_FUSION],
+  missingCapabilityStatus: LegalityStatus.UNKNOWN,
+  capabilityOperatorBindings: ['producer', 'consumer'],
+  requiredProperties: [
+    wholeProperty(PropertyKind.ELEMENTWISE, 'operator', LegalityStatus.UNKNOWN),
+    wholeProperty(PropertyKind.PURE),
+    wholeProperty(PropertyKind.REDUCTION, 'consumer'),
+    wholeProperty(PropertyKind.PURE, 'consumer'),
+  ],
+  justification: 'A corresponding-element producer may feed an incremental, mergeable reduction partial state without full intermediate materialization when graph usage is exclusive.',
+  matchStructure: reductionInputFusionStructureMatches,
+  checkMathematicalLegality: checkReductionInputFusionMathematics,
+  checkGraphLegality: checkReductionInputFusionGraphLegality,
+  collectEvidence: collectReductionInputFusionEvidence,
+  apply: reductionInputFusionRegion,
+};
+
 export const SCALE_PROPAGATION_RULES: readonly RewriteRule[] = [
   scaleThroughLinearRule,
   scaleThroughPositiveHomogeneousRule,
@@ -793,6 +1287,10 @@ export const SCALE_PROPAGATION_RULES: readonly RewriteRule[] = [
 
 export const REASSOCIATION_RULES: readonly RewriteRule[] = [
   reassociateAssociativeRightRule,
+];
+
+export const REDUCTION_INPUT_FUSION_RULES: readonly RewriteRule[] = [
+  embedElementwiseProducerIntoReductionRule,
 ];
 
 export const REWRITE_RULES: readonly RewriteRule[] = [
@@ -805,6 +1303,7 @@ export const REWRITE_RULES: readonly RewriteRule[] = [
   doubleTransposeRule,
   ...SCALE_PROPAGATION_RULES,
   ...REASSOCIATION_RULES,
+  ...REDUCTION_INPUT_FUSION_RULES,
 ];
 
 export const REWRITE_RULE_MAP: Readonly<Record<string, RewriteRule>> = Object.fromEntries(

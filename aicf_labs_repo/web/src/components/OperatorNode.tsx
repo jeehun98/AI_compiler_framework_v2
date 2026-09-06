@@ -3,7 +3,7 @@ import type { OperatorId } from '../domain/operator';
 import { getOperator } from '../catalog/operators';
 
 export type GraphFlowNode = Node<
-  { operatorId: OperatorId; subtitle?: string; isOutput?: boolean; hasError?: boolean },
+  { operatorId: OperatorId; subtitle?: string; isOutput?: boolean; hasError?: boolean; isContextual?: boolean },
   'operator'
 >;
 
@@ -13,7 +13,7 @@ export function OperatorNode({ data, selected }: NodeProps<GraphFlowNode>) {
 
   return (
     <div
-      className={`operator-node ${selected ? 'is-selected' : ''} ${data.hasError ? 'has-error' : ''}`}
+      className={`operator-node ${selected ? 'is-selected' : ''} ${data.isContextual ? 'is-contextual' : ''} ${data.hasError ? 'has-error' : ''}`}
       style={{ '--node-accent': operator.accent } as React.CSSProperties}
     >
       {Array.from({ length: operator.arity }, (_, index) => (

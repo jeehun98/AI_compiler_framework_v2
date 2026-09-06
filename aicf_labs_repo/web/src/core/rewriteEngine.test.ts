@@ -202,11 +202,12 @@ describe('rewrite matching and application', () => {
 });
 
 describe('rewrite metadata', () => {
-  it('defines the existing, scale-propagation, and reassociation rules in deterministic order', () => {
+  it('defines all phased semantic transformation rules in deterministic order', () => {
     expect(REWRITE_RULES.map(({ id }) => id)).toEqual([
       'add-zero', 'mul-one', 'mul-zero', 'constant-fold', 'add-commute', 'mul-commute', 'double-transpose',
       'scale-through-linear', 'scale-through-positive-homogeneous',
       'reassociate-associative-right',
+      'embed-elementwise-producer-into-reduction',
     ]);
   });
 

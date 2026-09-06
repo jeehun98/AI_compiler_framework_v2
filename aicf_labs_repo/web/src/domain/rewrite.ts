@@ -7,6 +7,11 @@ import type {
   PropertyScope,
   TransformationCapability,
 } from './property';
+import type {
+  OperatorSemanticFacts,
+  TransformationEvidence,
+  TransformationFact,
+} from './semantic';
 
 export type RewriteExactness = 'exact' | 'conditionally-exact' | 'approximate';
 
@@ -42,6 +47,7 @@ export interface PropertyRequirement {
   kind: PropertyKind;
   operatorBinding: string;
   scope: PropertyRequirementScope;
+  missingPropertyStatus?: typeof LegalityStatus.REJECTED | typeof LegalityStatus.UNKNOWN;
 }
 
 export interface ResolvedPropertyRequirement {
@@ -55,6 +61,14 @@ export interface ResolvedPropertyRequirement {
 export interface RuleEvaluationContext {
   semanticDomain: SemanticDomain;
   resolvedProperties: readonly ResolvedPropertyRequirement[];
+  operatorSemanticFacts: readonly ResolvedOperatorSemanticFacts[];
+}
+
+export interface ResolvedOperatorSemanticFacts {
+  binding: string;
+  operatorNodeId: string;
+  operatorId: string;
+  facts: OperatorSemanticFacts;
 }
 
 export interface RewriteMatch {
@@ -64,6 +78,7 @@ export interface RewriteMatch {
   nodeIds: string[];
   bindings: Record<string, string>;
   summary: string;
+  facts?: readonly TransformationFact[];
 }
 
 export interface RewriteRule {
@@ -76,7 +91,9 @@ export interface RewriteRule {
   requiredMask: OperatorMask;
   semanticDomain: SemanticDomain;
   requiredCapabilities: readonly TransformationCapability[];
+  missingCapabilityStatus?: typeof LegalityStatus.REJECTED | typeof LegalityStatus.UNKNOWN;
   requiredProperties: readonly PropertyRequirement[];
+  capabilityOperatorBindings?: readonly string[];
   justification: string;
   /** Finds graph structure only. Property and legality decisions are later phases. */
   matchStructure(graph: Graph, candidates: readonly GraphNode[]): RewriteMatch[];
@@ -90,6 +107,13 @@ export interface RewriteRule {
     match: RewriteMatch,
     context: RuleEvaluationContext,
   ): LegalityResult;
+  collectEvidence?(
+    graph: Graph,
+    match: RewriteMatch,
+    context: RuleEvaluationContext,
+    mathematicalLegality: LegalityResult,
+    graphLegality: LegalityResult,
+  ): TransformationEvidence;
   apply(graph: Graph, match: RewriteMatch): Graph;
 }
 
@@ -100,11 +124,13 @@ export interface TransformationAttempt {
   ruleName: string;
   matchId: string;
   bindings: Readonly<Record<string, string>>;
+  graphFacts?: readonly TransformationFact[];
   requiredProperties: readonly string[];
   requiredCapabilities: readonly TransformationCapability[];
   semanticDomain: SemanticDomain;
   mathematicalLegality: LegalityResult;
   graphLegality: LegalityResult;
+  evidence?: TransformationEvidence;
   status: LegalityStatus;
   targetGraphId?: string;
   reason?: string;
@@ -124,5 +150,7 @@ export interface RewriteCandidate {
   targetGraphId: string;
   semanticDomain: SemanticDomain;
   justification: string;
+  graphFacts?: readonly TransformationFact[];
+  evidence?: TransformationEvidence;
   graph: Graph;
 }

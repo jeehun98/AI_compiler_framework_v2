@@ -6,6 +6,12 @@ import {
   PropertyKind,
   TransformationCapability,
 } from '../domain/property';
+import {
+  CorrespondingElementMapping,
+  DependencyFootprintKind,
+  ReuseKind,
+  TransformationFactKind,
+} from '../domain/semantic';
 import { OPERATORS, OPERATOR_MAP } from './operators';
 
 describe('operator catalog', () => {
@@ -81,5 +87,75 @@ describe('operator catalog', () => {
     expect(deriveTransformationCapabilities(OPERATOR_MAP.matmul.propertyClaims)).not.toContain(
       TransformationCapability.REASSOCIATION,
     );
+  });
+
+  it('derives reduction input fusion only from the full property set plus direct dataflow', () => {
+    const claims = [...OPERATOR_MAP.relu.propertyClaims, ...OPERATOR_MAP.reduceSum.propertyClaims];
+    const graphFacts = [{
+      scope: 'graph-instance' as const,
+      kind: TransformationFactKind.DIRECT_DATAFLOW,
+      reason: 'test producer output directly supplies the reduction input',
+    }];
+    const operatorSemanticFacts = [
+      { role: 'producer', facts: OPERATOR_MAP.relu.semanticFacts },
+      { role: 'consumer', facts: OPERATOR_MAP.reduceSum.semanticFacts },
+    ];
+    expect(OPERATOR_MAP.relu.propertyClaims.some(
+      ({ kind }) => kind === PropertyKind.SHAPE_PRESERVING,
+    )).toBe(true);
+    expect(deriveTransformationCapabilities(claims)).not.toContain(
+      TransformationCapability.REDUCTION_INPUT_FUSION,
+    );
+    expect(deriveTransformationCapabilities(claims, { graphFacts })).not.toContain(
+      TransformationCapability.REDUCTION_INPUT_FUSION,
+    );
+    expect(deriveTransformationCapabilities(claims, { operatorSemanticFacts })).not.toContain(
+      TransformationCapability.REDUCTION_INPUT_FUSION,
+    );
+    expect(deriveTransformationCapabilities(claims, {
+      graphFacts,
+      operatorSemanticFacts: [
+        { role: 'producer', facts: OPERATOR_MAP.reduceSum.semanticFacts },
+        { role: 'consumer', facts: OPERATOR_MAP.relu.semanticFacts },
+      ],
+    })).not.toContain(TransformationCapability.REDUCTION_INPUT_FUSION);
+    expect(deriveTransformationCapabilities(claims, {
+      graphFacts,
+      operatorSemanticFacts,
+    })).toContain(TransformationCapability.REDUCTION_INPUT_FUSION);
+  });
+
+  it('separates operator-level dependency, reuse, and partial-state semantics', () => {
+    expect(OPERATOR_MAP.relu.semanticFacts).toMatchObject({
+      scope: 'operator',
+      dependencyFootprint: {
+        kind: DependencyFootprintKind.CORRESPONDING_ELEMENT,
+        inputMapping: CorrespondingElementMapping.EXACT,
+      },
+      reuse: { kind: ReuseKind.NONE },
+    });
+    expect(OPERATOR_MAP.add.semanticFacts).toMatchObject({
+      dependencyFootprint: {
+        kind: DependencyFootprintKind.CORRESPONDING_ELEMENT,
+        inputMapping: CorrespondingElementMapping.EXACT_OR_SCALAR_BROADCAST,
+      },
+      reuse: { kind: ReuseKind.UNKNOWN },
+    });
+    expect(OPERATOR_MAP.reduceSum.semanticFacts).toMatchObject({
+      dependencyFootprint: {
+        kind: DependencyFootprintKind.FULL_AXIS,
+        axis: 'FROM_OPERATOR_ATTRIBUTE',
+      },
+      reuse: { kind: ReuseKind.WITHIN_OUTPUT },
+      partialState: {
+        supportsIncrementalUpdate: true,
+        supportsMerge: true,
+        stateKind: 'ACCUMULATOR',
+        stateScope: 'REDUCTION_OUTPUT',
+      },
+    });
+    expect(OPERATOR_MAP.transpose.semanticFacts.dependencyFootprint.kind).toBe(DependencyFootprintKind.UNKNOWN);
+    expect(OPERATOR_MAP.matmul.semanticFacts.dependencyFootprint.kind).toBe(DependencyFootprintKind.UNKNOWN);
+    expect(OPERATOR_MAP.add.semanticFacts.partialState).toBeUndefined();
   });
 });

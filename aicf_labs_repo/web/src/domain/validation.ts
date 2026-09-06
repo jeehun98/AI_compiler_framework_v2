@@ -10,7 +10,9 @@ export type ValidationIssueCode =
   | 'duplicate-edge-id'
   | 'missing-output'
   | 'invalid-output'
-  | 'duplicate-output';
+  | 'duplicate-output'
+  | 'duplicate-region-id'
+  | 'invalid-semantic-region';
 
 export interface ValidationIssue {
   code: ValidationIssueCode;

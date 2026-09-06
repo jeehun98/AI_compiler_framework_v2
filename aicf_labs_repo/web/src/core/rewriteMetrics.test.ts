@@ -93,6 +93,7 @@ describe('rewrite mask instrumentation', () => {
       { ruleId: 'scale-through-linear', nodesScanned: 20, maskAccepted: 13, conditionAccepted: 0, rewritesApplied: 0 },
       { ruleId: 'scale-through-positive-homogeneous', nodesScanned: 20, maskAccepted: 13, conditionAccepted: 1, rewritesApplied: 1 },
       { ruleId: 'reassociate-associative-right', nodesScanned: 20, maskAccepted: 13, conditionAccepted: 0, rewritesApplied: 0 },
+      { ruleId: 'embed-elementwise-producer-into-reduction', nodesScanned: 20, maskAccepted: 13, conditionAccepted: 0, rewritesApplied: 0 },
     ]);
     expect(byRule['add-zero'].maskPassRate).toBeCloseTo(0.4);
     expect(byRule['add-zero'].conditionPassRate).toBeCloseTo(0.125);
@@ -177,7 +178,9 @@ describe('current feature usage', () => {
     const value = representativeGraph();
 
     for (const rule of REWRITE_RULES.filter(({ id }) =>
-      !id.startsWith('scale-through-') && id !== 'reassociate-associative-right')) {
+      !id.startsWith('scale-through-')
+      && id !== 'reassociate-associative-right'
+      && id !== 'embed-elementwise-producer-into-reduction')) {
       const withPure = nodesMatchingMask(value, rule.requiredMask).length;
       const withoutPure = nodesMatchingMask(
         value,
@@ -186,7 +189,9 @@ describe('current feature usage', () => {
       expect(withPure, rule.id).toBe(withoutPure);
     }
     for (const rule of REWRITE_RULES.filter(({ id }) =>
-      id.startsWith('scale-through-') || id === 'reassociate-associative-right')) {
+      id.startsWith('scale-through-')
+      || id === 'reassociate-associative-right'
+      || id === 'embed-elementwise-producer-into-reduction')) {
       expect(nodesMatchingMask(value, rule.requiredMask)).toHaveLength(13);
       expect(nodesMatchingMask(value, rule.requiredMask & ~OperatorMask.PURE)).toHaveLength(20);
     }

@@ -16,7 +16,10 @@ export function formatTransformationAttemptsText(attempts: readonly Transformati
     const reason = attempt.status === LegalityStatus.APPLICABLE || !attempt.reason
       ? ''
       : ` — ${attempt.reason}`;
-    lines.push(`${branch} ${attempt.ruleName} [${attempt.matchId}] → ${outcome}${reason}`);
+    const materialization = attempt.evidence?.kind === 'producer-embedding'
+      ? ` materialization=${attempt.evidence.materialization.requirement}`
+      : '';
+    lines.push(`${branch} ${attempt.ruleName} [${attempt.matchId}] → ${outcome}${materialization}${reason}`);
   });
   return lines.join('\n');
 }

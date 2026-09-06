@@ -1,4 +1,5 @@
 import type { OperatorId } from './operator';
+import type { DependencyKind, MaterializationRequirement } from './semantic';
 
 export type Dimension = number | string;
 export type TensorShape = Dimension[];
@@ -42,12 +43,26 @@ export interface GraphEdge {
   targetPort: InputPortId;
 }
 
+export interface ReductionInputFusionRegion {
+  id: string;
+  kind: 'reduction-input-fusion';
+  inputTransformNodeId: string;
+  reducerNodeId: string;
+  reducerInputPort: InputPortId;
+  producerInputNodeIds: string[];
+  dependencyKind: DependencyKind;
+  materializationRequirement: MaterializationRequirement;
+}
+
+export type SemanticRegion = ReductionInputFusionRegion;
+
 export interface Graph {
   id: string;
   name: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
   outputs: string[];
+  semanticRegions?: SemanticRegion[];
 }
 
 export interface GraphPosition {

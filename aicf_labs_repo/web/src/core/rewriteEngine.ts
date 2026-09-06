@@ -11,6 +11,7 @@ import {
   LegalityStatus,
   type LegalityResult,
   type PropertyRequirement,
+  type ResolvedOperatorSemanticFacts,
   type ResolvedPropertyRequirement,
   type RewriteCandidate,
   type RewriteMatch,
@@ -50,6 +51,7 @@ interface PropertyEvaluation {
   legality: LegalityResult;
   resolved: ResolvedPropertyRequirement[];
   requiredLabels: string[];
+  operatorSemanticFacts: ResolvedOperatorSemanticFacts[];
 }
 
 function stableValue(value: unknown): unknown {
@@ -71,6 +73,9 @@ export function graphFingerprint(graph: Graph): string {
       .map(({ id, sourceNodeId, sourcePort, targetNodeId, targetPort }) => ({ id, sourceNodeId, sourcePort, targetNodeId, targetPort }))
       .sort((left, right) => left.id.localeCompare(right.id)),
     outputs: [...graph.outputs],
+    semanticRegions: [...(graph.semanticRegions ?? [])]
+      .map(stableValue)
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
   });
 }
 
@@ -130,6 +135,13 @@ function scopesEqual(left: PropertyScope, right: PropertyScope): boolean {
   return left.kind === 'operator' && right.kind === 'operator';
 }
 
+function formatRequirementLabel(requirement: PropertyRequirement, scope: PropertyScope): string {
+  if (scope.kind === 'operator' && requirement.operatorBinding !== 'operator') {
+    return `${requirement.kind}(${requirement.operatorBinding})`;
+  }
+  return formatPropertyClaim({ kind: requirement.kind, scope });
+}
+
 function evaluatePropertiesAndCapabilities(
   graph: Graph,
   rule: RewriteRule,
@@ -138,6 +150,21 @@ function evaluatePropertiesAndCapabilities(
   const resolved: ResolvedPropertyRequirement[] = [];
   const requiredLabels: string[] = [];
   const evidence: string[] = [];
+  const operatorSemanticFacts: ResolvedOperatorSemanticFacts[] = [];
+
+  for (const binding of rule.capabilityOperatorBindings ?? []) {
+    const operatorNodeId = match.bindings[binding];
+    const operatorNode = graph.nodes.find(({ id }) => id === operatorNodeId);
+    const operator = getOperator(operatorNode?.operatorId);
+    if (operatorNode && operator) {
+      operatorSemanticFacts.push({
+        binding,
+        operatorNodeId,
+        operatorId: operator.id,
+        facts: operator.semanticFacts,
+      });
+    }
+  }
 
   for (const requirement of rule.requiredProperties) {
     const operatorNodeId = match.bindings[requirement.operatorBinding];
@@ -147,6 +174,7 @@ function evaluatePropertiesAndCapabilities(
       return {
         resolved,
         requiredLabels,
+        operatorSemanticFacts,
         legality: {
           status: LegalityStatus.UNKNOWN,
           reason: `Cannot resolve property binding '${requirement.operatorBinding}'.`,
@@ -154,13 +182,14 @@ function evaluatePropertiesAndCapabilities(
         },
       };
     }
-    const label = formatPropertyClaim({ kind: requirement.kind, scope });
+    const label = formatRequirementLabel(requirement, scope);
     requiredLabels.push(label);
     const operator = getOperator(operatorNode.operatorId);
     if (!operator) {
       return {
         resolved,
         requiredLabels,
+        operatorSemanticFacts,
         legality: {
           status: LegalityStatus.UNKNOWN,
           reason: `Operator metadata for '${operatorNode.operatorId}' is unavailable.`,
@@ -174,9 +203,12 @@ function evaluatePropertiesAndCapabilities(
       return {
         resolved,
         requiredLabels,
+        operatorSemanticFacts,
         legality: {
-          status: LegalityStatus.REJECTED,
-          reason: `Required ${label} property is absent on '${operatorNode.operatorId}'.`,
+          status: requirement.missingPropertyStatus ?? LegalityStatus.REJECTED,
+          reason: requirement.missingPropertyStatus === LegalityStatus.UNKNOWN
+            ? `Required ${label} property is absent on '${operatorNode.operatorId}'; the current semantic model cannot establish compatibility.`
+            : `Required ${label} property is absent on '${operatorNode.operatorId}'.`,
           evidence,
         },
       };
@@ -186,16 +218,22 @@ function evaluatePropertiesAndCapabilities(
   }
 
   const derivedCapabilities = new Set<TransformationCapability>(
-    deriveTransformationCapabilities(resolved.map(({ claim }) => claim)),
+    deriveTransformationCapabilities(resolved.map(({ claim }) => claim), {
+      graphFacts: match.facts ?? [],
+      operatorSemanticFacts: operatorSemanticFacts.map(({ binding, facts }) => ({ role: binding, facts })),
+    }),
   );
   const missingCapability = rule.requiredCapabilities.find((capability) => !derivedCapabilities.has(capability));
   if (missingCapability) {
     return {
       resolved,
       requiredLabels,
+      operatorSemanticFacts,
       legality: {
-        status: LegalityStatus.REJECTED,
-        reason: `Required ${missingCapability} capability cannot be derived from the matched properties.`,
+        status: rule.missingCapabilityStatus ?? LegalityStatus.REJECTED,
+        reason: rule.missingCapabilityStatus === LegalityStatus.UNKNOWN
+          ? `Required ${missingCapability} capability cannot be derived because semantic facts are incomplete.`
+          : `Required ${missingCapability} capability cannot be derived from the matched properties and facts.`,
         evidence,
       },
     };
@@ -204,6 +242,7 @@ function evaluatePropertiesAndCapabilities(
   return {
     resolved,
     requiredLabels,
+    operatorSemanticFacts,
     legality: {
       status: LegalityStatus.APPLICABLE,
       reason: 'Required scoped properties and derived capabilities are present.',
@@ -266,6 +305,7 @@ export function searchRewriteCandidates(
       const context = {
         semanticDomain: rule.semanticDomain,
         resolvedProperties: propertyEvaluation.resolved,
+        operatorSemanticFacts: propertyEvaluation.operatorSemanticFacts,
       };
       let mathematicalLegality = propertyEvaluation.legality;
       if (mathematicalLegality.status === LegalityStatus.APPLICABLE) {
@@ -302,6 +342,13 @@ export function searchRewriteCandidates(
       }
 
       const status = attemptStatus(mathematicalLegality, graphLegality);
+      const evidence = rule.collectEvidence?.(
+        graph,
+        match,
+        context,
+        mathematicalLegality,
+        graphLegality,
+      );
       const targetGraphId = status === LegalityStatus.APPLICABLE
         ? transformedGraphId(graph, rule, match)
         : undefined;
@@ -312,11 +359,13 @@ export function searchRewriteCandidates(
         ruleName: rule.name,
         matchId: match.id,
         bindings: { ...match.bindings },
+        ...(match.facts ? { graphFacts: [...match.facts] } : {}),
         requiredProperties: propertyEvaluation.requiredLabels,
         requiredCapabilities: [...rule.requiredCapabilities],
         semanticDomain: rule.semanticDomain,
         mathematicalLegality,
         graphLegality,
+        ...(evidence ? { evidence } : {}),
         status,
         ...(targetGraphId ? { targetGraphId } : {}),
         ...(status === LegalityStatus.APPLICABLE
@@ -344,6 +393,8 @@ export function searchRewriteCandidates(
         targetGraphId,
         semanticDomain: rule.semanticDomain,
         justification: rule.justification,
+        ...(match.facts ? { graphFacts: [...match.facts] } : {}),
+        ...(evidence ? { evidence } : {}),
         graph: candidateGraph,
       });
     }

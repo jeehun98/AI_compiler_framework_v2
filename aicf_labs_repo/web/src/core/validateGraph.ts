@@ -1,5 +1,7 @@
 import { getOperator } from '../catalog/operators';
 import type { Graph, GraphEdge, InputPortId } from '../domain/graph';
+import { PropertyKind } from '../domain/property';
+import { DependencyKind, MaterializationRequirement } from '../domain/semantic';
 import type { ValidationIssue, ValidationResult } from '../domain/validation';
 import { topologicalSort } from './topology';
 
@@ -28,12 +30,17 @@ export function validateGraph(graph: Graph): ValidationResult {
   const duplicateEdgeIds = duplicates(graph.edges.map(({ id }) => id));
   const outputs = Array.isArray(graph.outputs) ? graph.outputs : [];
   const duplicateOutputIds = duplicates(outputs);
+  const semanticRegions = Array.isArray(graph.semanticRegions) ? graph.semanticRegions : [];
+  const duplicateRegionIds = duplicates(semanticRegions.map(({ id }) => id));
 
   for (const id of duplicateNodeIds) {
     issues.push(issue('duplicate-node-id', `노드 ID '${id}'가 중복되었습니다.`, [id]));
   }
   for (const id of duplicateEdgeIds) {
     issues.push(issue('duplicate-edge-id', `엣지 ID '${id}'가 중복되었습니다.`, [], [id]));
+  }
+  for (const id of duplicateRegionIds) {
+    issues.push(issue('duplicate-region-id', `semantic region ID '${id}'가 중복되었습니다.`));
   }
 
   const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -87,6 +94,43 @@ export function validateGraph(graph: Graph): ValidationResult {
       } else if (portEdges.length > 1) {
         issues.push(issue('duplicate-input', `${operator.name}의 입력 '${port.label}'에 여러 엣지가 연결되었습니다.`, [node.id], portEdges.map(({ id }) => id)));
       }
+    }
+  }
+
+  for (const region of semanticRegions) {
+    const producer = nodes.get(region.inputTransformNodeId);
+    const reducer = nodes.get(region.reducerNodeId);
+    const producerMetadata = getOperator(producer?.operatorId);
+    const reducerMetadata = getOperator(reducer?.operatorId);
+    const producerInputs = validEdges
+      .filter(({ targetNodeId }) => targetNodeId === region.inputTransformNodeId)
+      .sort((left, right) => left.targetPort.localeCompare(right.targetPort) || left.id.localeCompare(right.id))
+      .map(({ sourceNodeId }) => sourceNodeId);
+    const directEdges = validEdges.filter(({ sourceNodeId, targetNodeId, targetPort }) =>
+      sourceNodeId === region.inputTransformNodeId
+      && targetNodeId === region.reducerNodeId
+      && targetPort === region.reducerInputPort);
+    const producerUses = validEdges.filter(({ sourceNodeId }) => sourceNodeId === region.inputTransformNodeId);
+    const validRegion = region.kind === 'reduction-input-fusion'
+      && producer !== undefined
+      && reducer !== undefined
+      && producerMetadata?.propertyClaims.some(({ kind }) => kind === PropertyKind.ELEMENTWISE) === true
+      && producerMetadata.propertyClaims.some(({ kind }) => kind === PropertyKind.PURE)
+      && reducerMetadata?.propertyClaims.some(({ kind }) => kind === PropertyKind.REDUCTION) === true
+      && reducerMetadata.propertyClaims.some(({ kind }) => kind === PropertyKind.PURE)
+      && directEdges.length === 1
+      && producerUses.length === 1
+      && !outputs.includes(region.inputTransformNodeId)
+      && JSON.stringify(producerInputs) === JSON.stringify(region.producerInputNodeIds)
+      && region.dependencyKind === DependencyKind.ELEMENTWISE_CORRESPONDING_INPUTS
+      && region.materializationRequirement === MaterializationRequirement.NOT_REQUIRED;
+    if (!validRegion) {
+      issues.push(issue(
+        'invalid-semantic-region',
+        `semantic region '${region.id}'가 현재 graph dependency와 일치하지 않습니다.`,
+        [region.inputTransformNodeId, region.reducerNodeId],
+        directEdges.map(({ id }) => id),
+      ));
     }
   }
 

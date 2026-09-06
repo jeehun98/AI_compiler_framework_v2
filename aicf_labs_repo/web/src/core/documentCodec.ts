@@ -5,9 +5,12 @@ import type {
   GraphNode,
   GraphPosition,
   GraphViewport,
+  InputPortId,
   NodeParameters,
+  SemanticRegion,
 } from '../domain/graph';
 import type { OperatorId } from '../domain/operator';
+import { DependencyKind, MaterializationRequirement } from '../domain/semantic';
 
 export type DocumentParseResult =
   | { ok: true; value: GraphDocument }
@@ -114,6 +117,58 @@ function parseEdge(
   };
 }
 
+function parseSemanticRegion(
+  value: unknown,
+  index: number,
+  nodes: ReadonlyMap<string, GraphNode>,
+): ValueResult<SemanticRegion> {
+  if (!isRecord(value)) return { ok: false, error: `semanticRegions[${index}]는 객체여야 합니다.` };
+  const allowed = [
+    'id',
+    'kind',
+    'inputTransformNodeId',
+    'reducerNodeId',
+    'reducerInputPort',
+    'producerInputNodeIds',
+    'dependencyKind',
+    'materializationRequirement',
+  ];
+  if (!hasOnlyKeys(value, allowed)) {
+    return { ok: false, error: `semanticRegions[${index}]에 알 수 없는 필드가 있습니다.` };
+  }
+  if (!isNonEmptyString(value.id) || value.kind !== 'reduction-input-fusion') {
+    return { ok: false, error: `semanticRegions[${index}]의 id 또는 kind가 유효하지 않습니다.` };
+  }
+  if (!isNonEmptyString(value.inputTransformNodeId) || !nodes.has(value.inputTransformNodeId)
+    || !isNonEmptyString(value.reducerNodeId) || !nodes.has(value.reducerNodeId)) {
+    return { ok: false, error: `semanticRegions[${index}]가 존재하지 않는 node를 참조합니다.` };
+  }
+  const reducer = nodes.get(value.reducerNodeId);
+  const reducerPort = getOperator(reducer?.operatorId)?.inputPorts.find(({ id }) => id === value.reducerInputPort);
+  if (!reducerPort) return { ok: false, error: `semanticRegions[${index}]의 reducer input port가 유효하지 않습니다.` };
+  if (!Array.isArray(value.producerInputNodeIds)
+    || !value.producerInputNodeIds.every((nodeId) => isNonEmptyString(nodeId) && nodes.has(nodeId))) {
+    return { ok: false, error: `semanticRegions[${index}]의 producer input node 목록이 유효하지 않습니다.` };
+  }
+  if (value.dependencyKind !== DependencyKind.ELEMENTWISE_CORRESPONDING_INPUTS
+    || value.materializationRequirement !== MaterializationRequirement.NOT_REQUIRED) {
+    return { ok: false, error: `semanticRegions[${index}]의 dependency/materialization 값이 유효하지 않습니다.` };
+  }
+  return {
+    ok: true,
+    value: {
+      id: value.id,
+      kind: 'reduction-input-fusion',
+      inputTransformNodeId: value.inputTransformNodeId,
+      reducerNodeId: value.reducerNodeId,
+      reducerInputPort: reducerPort.id as InputPortId,
+      producerInputNodeIds: [...value.producerInputNodeIds],
+      dependencyKind: DependencyKind.ELEMENTWISE_CORRESPONDING_INPUTS,
+      materializationRequirement: MaterializationRequirement.NOT_REQUIRED,
+    },
+  };
+}
+
 function parsePosition(value: unknown, nodeId: string): ValueResult<GraphPosition> {
   if (!isRecord(value) || !isFiniteNumber(value.x) || !isFiniteNumber(value.y)) {
     return { ok: false, error: `노드 '${nodeId}'의 position은 유한한 x, y를 가져야 합니다.` };
@@ -185,6 +240,20 @@ export function parseGraphDocument(json: string): DocumentParseResult {
     occupiedPorts.add(key);
   }
 
+  const semanticRegions: SemanticRegion[] = [];
+  if (graphValue.semanticRegions !== undefined) {
+    if (!Array.isArray(graphValue.semanticRegions)) {
+      return { ok: false, error: 'graph.semanticRegions는 배열이어야 합니다.' };
+    }
+    for (let index = 0; index < graphValue.semanticRegions.length; index += 1) {
+      const parsed = parseSemanticRegion(graphValue.semanticRegions[index], index, nodeMap);
+      if (!parsed.ok) return parsed;
+      semanticRegions.push(parsed.value);
+    }
+    const duplicateRegionId = duplicateValue(semanticRegions.map(({ id }) => id));
+    if (duplicateRegionId) return { ok: false, error: `semantic region ID '${duplicateRegionId}'가 중복되었습니다.` };
+  }
+
   if (!isRecord(root.layout) || !isRecord(root.layout.positions)) {
     return { ok: false, error: 'layout.positions 객체가 필요합니다.' };
   }
@@ -203,7 +272,14 @@ export function parseGraphDocument(json: string): DocumentParseResult {
     ok: true,
     value: {
       schemaVersion: 1,
-      graph: { id: graphValue.id, name: graphValue.name, nodes, edges, outputs },
+      graph: {
+        id: graphValue.id,
+        name: graphValue.name,
+        nodes,
+        edges,
+        outputs,
+        ...(graphValue.semanticRegions !== undefined ? { semanticRegions } : {}),
+      },
       layout: { positions, ...(viewport.value ? { viewport: viewport.value } : {}) },
     },
   };
