@@ -1,18 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import '@xyflow/react/dist/style.css';
-import 'katex/dist/katex.min.css';
-import './styles.css';
-import { App } from './App';
+import App from './App';
+import report from '../public/report.json';
 
-const rootElement = document.getElementById('root');
-
-if (!rootElement) {
-  throw new Error('Root element was not found');
-}
-
-createRoot(rootElement).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+createRoot(document.getElementById('root')!).render(<StrictMode><App report={report} /></StrictMode>);

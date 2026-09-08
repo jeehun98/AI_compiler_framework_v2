@@ -1,26 +1,26 @@
 {
-  "name": "aicf-graph-lab",
+  "name": "aicf-minimal-viewer",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "report": "python ../demo.py --output public/report.json",
+    "predev": "npm run report",
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "typecheck": "tsc -b --pretty false",
+    "pretypecheck": "npm run report",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run report",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "prebuild": "npm run report",
+    "build": "tsc --noEmit && vite build"
   },
   "dependencies": {
-    "@xyflow/react": "^12.11.3",
-    "katex": "^0.18.4",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "zustand": "^5.0.15"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
-    "@types/katex": "^0.16.8",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",

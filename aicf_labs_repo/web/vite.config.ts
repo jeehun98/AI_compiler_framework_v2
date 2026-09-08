@@ -3,10 +3,5 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [react()],
-  test: {
-    environment: 'node',
-    fileParallelism: false,
-    maxWorkers: 1,
-    css: true,
-  },
+  test: { include: ['src/App.test.tsx'], fileParallelism: false, maxWorkers: 1 },
 });
